@@ -29,18 +29,42 @@ app.use((req, res, next) => {
     const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
     const status = res.statusCode;
     const outcome = status >= 400 ? 'ERROR' : 'OK';
-    console[status >= 400 ? 'error' : 'log'](
-      `[${new Date().toISOString()}] ${outcome} ${req.method} ${req.originalUrl} ${status} ${durationMs.toFixed(1)}ms`
+    const logLevel = status >= 400 ? 'error' : 'log';
+    const origin = req.headers.origin || 'no-origin';
+    console[logLevel](
+      `[${new Date().toISOString()}] ${outcome} ${req.method} ${req.originalUrl} ${status} ${durationMs.toFixed(1)}ms [Origin: ${origin}]`
     );
   });
   next();
 });
 
-// Middlewares
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
+// CORS Configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = process.env.CORS_ORIGIN 
+      ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+      : ['*'];
+    
+    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-}));
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Authorization'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+  maxAge: 86400, // 24 hours
+};
+
+// Middlewares
+app.use(cors(corsOptions));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
