@@ -1,8 +1,8 @@
-const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
-const User = require('../models/User');
-const emailService = require('../utils/emailService');
-const { USER_ROLES } = require('../conf/constants');
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import User from '../models/User.js';
+import emailService from '../utils/emailService.js';
+import { USER_ROLES } from '../config/constants.js';
 
 /**
  * Generate JWT Token
@@ -18,7 +18,7 @@ const generateToken = (id) => {
  * @route   POST /api/auth/register
  * @access  Public
  */
-exports.register = async (req, res, next) => {
+export const register = async (req, res, next) => {
   try {
     const { name, email, password, phone, role } = req.body;
 
@@ -37,31 +37,28 @@ exports.register = async (req, res, next) => {
       email,
       password,
       phone,
-      role: role || USER_ROLES.CUSTOMER,
+      role: role || USER_ROLES.USUARIO,
     });
 
-    // Generate email verification code (6 digits)
+    // Generate email verification code (6 dígitos)
     const verificationCode = user.generateEmailVerificationCode();
     await user.save({ validateBeforeSave: false });
 
-    // Send verification code email
-    await emailService.sendEmailVerificationCode(user, verificationCode);
+    // Send verification email with code
+    await emailService.sendVerificationCode(user.email, user.name, verificationCode);
 
-    // Generate token
-    const token = generateToken(user._id);
-
-    res.status(201).json({
+      res.status(201).json({
       success: true,
-      message: 'Usuario registrado exitosamente. Por favor verifica tu email con el código enviado.',
+      message: 'Usuario registrado exitosamente. Te hemos enviado un código de 6 dígitos a tu email. Por favor verifícalo para poder iniciar sesión.',
       data: {
         user: {
           id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
+        name: user.name,
+        email: user.email,
+        role: user.role,
           isEmailVerified: user.isEmailVerified,
         },
-        token,
+        requiresEmailVerification: true,
       },
     });
   } catch (error) {
@@ -74,7 +71,7 @@ exports.register = async (req, res, next) => {
  * @route   POST /api/auth/login
  * @access  Public
  */
-exports.login = async (req, res, next) => {
+export const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
@@ -103,6 +100,15 @@ exports.login = async (req, res, next) => {
       });
     }
 
+    // Verificar que el email esté verificado
+    if (!user.isEmailVerified) {
+      return res.status(403).json({
+        success: false,
+        message: 'Debes verificar tu email antes de iniciar sesión. Revisa tu correo o solicita un nuevo código.',
+        requiresEmailVerification: true,
+      });
+    }
+
     // Generate token
     const token = generateToken(user._id);
 
@@ -112,9 +118,9 @@ exports.login = async (req, res, next) => {
       data: {
         user: {
           id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
+      name: user.name,
+      email: user.email,
+      role: user.role,
           isEmailVerified: user.isEmailVerified,
         },
         token,
@@ -130,9 +136,9 @@ exports.login = async (req, res, next) => {
  * @route   GET /api/auth/me
  * @access  Private
  */
-exports.getMe = async (req, res, next) => {
+export const getMe = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user._id);
 
     res.json({
       success: true,
@@ -144,11 +150,11 @@ exports.getMe = async (req, res, next) => {
 };
 
 /**
- * @desc    Verify email
- * @route   GET /api/auth/verify-email
- * @access  Public
+ * @desc    Verify email with code
+ * @route   POST /api/auth/verify-email
+ * @access  Public (pero necesita email)
  */
-exports.verifyEmail = async (req, res, next) => {
+export const verifyEmail = async (req, res, next) => {
   try {
     const { email, code } = req.body;
 
@@ -159,48 +165,80 @@ exports.verifyEmail = async (req, res, next) => {
       });
     }
 
+    // Buscar usuario por email
     const user = await User.findOne({ email });
 
     if (!user) {
-      return res.status(400).json({
+      return res.status(404).json({
         success: false,
         message: 'Usuario no encontrado',
       });
     }
 
-    if (!user.emailVerificationCode || !user.emailVerificationExpire) {
+    // Verificar si ya está verificado
+    if (user.isEmailVerified) {
       return res.status(400).json({
         success: false,
-        message: 'No hay un código de verificación pendiente',
+        message: 'El email ya está verificado',
       });
     }
 
-    if (user.emailVerificationExpire < Date.now()) {
+    // Verificar que existe un código de verificación
+    if (!user.emailVerificationCode || !user.emailVerificationCodeExpires) {
       return res.status(400).json({
         success: false,
-        message: 'Código expirado, solicita uno nuevo',
+        message: 'No hay código de verificación pendiente. Por favor solicita uno nuevo.',
       });
     }
 
+    // Verificar que el código no haya expirado
+    if (Date.now() > user.emailVerificationCodeExpires) {
+      return res.status(400).json({
+        success: false,
+        message: 'El código de verificación ha expirado. Por favor solicita uno nuevo.',
+      });
+    }
+
+    // Verificar que el código sea correcto
     if (user.emailVerificationCode !== code) {
       return res.status(400).json({
         success: false,
-        message: 'Código inválido',
+        message: 'Código de verificación incorrecto',
       });
     }
 
     // Mark email as verified
     user.isEmailVerified = true;
     user.emailVerificationCode = undefined;
+    user.emailVerificationCodeExpires = undefined;
+    user.emailVerificationToken = undefined;
     user.emailVerificationExpire = undefined;
     await user.save();
 
-    // Send welcome email after successful verification
-    await emailService.sendWelcomeEmail(user);
+    // Enviar email de bienvenida después de verificar
+    try {
+      await emailService.sendWelcomeEmailAfterVerification(user.email, user.name);
+    } catch (error) {
+      console.error('Error enviando email de bienvenida:', error);
+      // No fallar la verificación si falla el email
+    }
 
-    res.json({
+    // Generar token para que pueda hacer login
+    const token = generateToken(user._id);
+
+      res.json({
       success: true,
-      message: 'Email verificado exitosamente',
+      message: 'Email verificado exitosamente. Ya puedes iniciar sesión.',
+      data: {
+        user: {
+          id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+          isEmailVerified: user.isEmailVerified,
+        },
+        token,
+      },
     });
   } catch (error) {
     next(error);
@@ -208,20 +246,28 @@ exports.verifyEmail = async (req, res, next) => {
 };
 
 /**
- * @desc    Resend verification email
+ * @desc    Resend verification code
  * @route   POST /api/auth/resend-verification
- * @access  Private
+ * @access  Public
  */
-exports.resendVerification = async (req, res, next) => {
+export const resendVerification = async (req, res, next) => {
   try {
     const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email es requerido',
+      });
+    }
 
     const user = await User.findOne({ email });
 
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'Usuario no encontrado',
+      // Por seguridad, no revelar si el usuario existe
+      return res.json({
+        success: true,
+        message: 'Si el email existe y no está verificado, recibirás un nuevo código',
       });
     }
 
@@ -232,14 +278,16 @@ exports.resendVerification = async (req, res, next) => {
       });
     }
 
+    // Generar nuevo código de 6 dígitos
     const verificationCode = user.generateEmailVerificationCode();
     await user.save({ validateBeforeSave: false });
 
-    await emailService.sendEmailVerificationCode(user, verificationCode);
+    // Enviar nuevo código por email
+    await emailService.sendVerificationCode(user.email, user.name, verificationCode);
 
     res.json({
       success: true,
-      message: 'Código de verificación enviado',
+      message: 'Si el email existe y no está verificado, recibirás un nuevo código',
     });
   } catch (error) {
     next(error);
@@ -251,9 +299,68 @@ exports.resendVerification = async (req, res, next) => {
  * @route   POST /api/auth/forgot-password
  * @access  Public
  */
-exports.forgotPassword = async (req, res, next) => {
+export const forgotPassword = async (req, res, next) => {
   try {
     const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email es requerido',
+      });
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      // Por seguridad, no revelar si el email existe o no
+      return res.json({
+        success: true,
+        message: 'Si el email existe, recibirás un código de recuperación',
+      });
+    }
+
+    // Generate reset code (6 dígitos)
+    const resetCode = user.generatePasswordResetCode();
+    await user.save({ validateBeforeSave: false });
+
+    console.log(`📧 Generando código de recuperación para: ${user.email}`);
+    console.log(`📧 Código generado: ${resetCode}`);
+
+    // Send email with code
+    const emailSent = await emailService.sendPasswordReset(user, resetCode);
+    
+    if (!emailSent) {
+      console.error('❌ Error: No se pudo enviar el email de recuperación');
+    } else {
+      console.log(`✅ Email de recuperación enviado a: ${user.email}`);
+    }
+
+    res.json({
+      success: true,
+      message: 'Si el email existe, recibirás un código de recuperación',
+    });
+  } catch (error) {
+    console.error('❌ Error en forgotPassword:', error);
+    next(error);
+  }
+};
+
+/**
+ * @desc    Reset password
+ * @route   PUT /api/auth/reset-password
+ * @access  Public
+ */
+export const resetPassword = async (req, res, next) => {
+  try {
+    const { email, code, password } = req.body;
+
+    if (!email || !code || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, código y nueva contraseña son requeridos',
+      });
+    }
 
     const user = await User.findOne({ email });
 
@@ -264,63 +371,40 @@ exports.forgotPassword = async (req, res, next) => {
       });
     }
 
-    // Generate reset token
-    const resetToken = user.generatePasswordResetToken();
-    await user.save({ validateBeforeSave: false });
-
-    // Send email
-    await emailService.sendPasswordReset(user, resetToken);
-
-    res.json({
-      success: true,
-      message: 'Email de recuperación enviado',
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * @desc    Reset password
- * @route   PUT /api/auth/reset-password
- * @access  Public
- */
-exports.resetPassword = async (req, res, next) => {
-  try {
-    const { token, password } = req.body;
-
-    if (!token || !password) {
+    // Verificar código
+    if (!user.passwordResetCode || !user.passwordResetCodeExpires) {
       return res.status(400).json({
         success: false,
-        message: 'Token y nueva contraseña son requeridos',
+        message: 'Código de recuperación no encontrado o expirado',
       });
     }
 
-    // Hash token
-    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-
-    const user = await User.findOne({
-      passwordResetToken: hashedToken,
-      passwordResetExpire: { $gt: Date.now() },
-    });
-
-    if (!user) {
+    if (Date.now() > user.passwordResetCodeExpires) {
       return res.status(400).json({
         success: false,
-        message: 'Token inválido o expirado',
+        message: 'Código de recuperación expirado',
+      });
+    }
+
+    if (user.passwordResetCode !== code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Código de recuperación incorrecto',
       });
     }
 
     // Set new password
     user.password = password;
-    user.passwordResetToken = undefined;
-    user.passwordResetExpire = undefined;
+    user.passwordResetCode = null;
+    user.passwordResetCodeExpires = null;
+    user.passwordResetToken = null;
+    user.passwordResetExpire = null;
     await user.save();
 
     // Generate token
     const authToken = generateToken(user._id);
 
-    res.json({
+      res.json({
       success: true,
       message: 'Contraseña restablecida exitosamente',
       data: {
@@ -337,7 +421,7 @@ exports.resetPassword = async (req, res, next) => {
  * @route   PUT /api/auth/update-password
  * @access  Private
  */
-exports.updatePassword = async (req, res, next) => {
+export const updatePassword = async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
@@ -348,7 +432,7 @@ exports.updatePassword = async (req, res, next) => {
       });
     }
 
-    const user = await User.findById(req.user.id).select('+password');
+    const user = await User.findById(req.user._id).select('+password');
 
     // Check current password
     if (!(await user.comparePassword(currentPassword))) {
@@ -359,7 +443,7 @@ exports.updatePassword = async (req, res, next) => {
     }
 
     user.password = newPassword;
-    await user.save();
+      await user.save();
 
     // Generate token
     const token = generateToken(user._id);
@@ -376,4 +460,85 @@ exports.updatePassword = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Update user profile
+ * @route   PUT /api/auth/profile
+ * @access  Private
+ */
+export const updateUserProfile = async (req, res, next) => {
+  try {
+    const { name, email, phone } = req.body;
 
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado',
+      });
+    }
+
+    // Update fields
+    if (name) user.name = name;
+    if (email) {
+      const originalEmail = user.email;
+      // Check if email is already taken by another user
+      const existingUser = await User.findOne({ email });
+      if (existingUser && existingUser._id.toString() !== user._id.toString()) {
+        return res.status(400).json({
+          success: false,
+          message: 'El email ya está en uso',
+        });
+      }
+      user.email = email;
+      // If email changed, mark as unverified
+      if (email !== originalEmail) {
+        user.isEmailVerified = false;
+      }
+    }
+    if (phone !== undefined) user.phone = phone;
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Perfil actualizado exitosamente',
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          isEmailVerified: user.isEmailVerified,
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Logout user
+ * @route   POST /api/auth/logout
+ * @access  Private
+ */
+export const logoutUser = async (req, res, next) => {
+  try {
+    // Since JWT is stateless, logout is handled client-side by removing the token
+    // This endpoint can be used for logging purposes or to invalidate tokens server-side if needed
+    res.json({
+      success: true,
+      message: 'Sesión cerrada exitosamente',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Exportaciones con alias para compatibilidad con rutas
+export const registerUser = register;
+export const loginUser = login;
+export const getUserProfile = getMe;
+export const resendVerificationCode = resendVerification;

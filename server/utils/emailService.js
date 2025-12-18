@@ -1,234 +1,433 @@
-const sgMail = require('@sendgrid/mail');
+import sgMail from '@sendgrid/mail';
+
+// Variables que se configurarán después de cargar dotenv
+let sendGridApiKey = null;
+let fromEmail = 'noreply@remeraslisas.com';
+let fromName = 'Remeras Lisas';
+let frontendUrl = 'http://localhost:3001';
+
+// Función para configurar SendGrid (se llama después de cargar dotenv)
+export const configureSendGrid = () => {
+  sendGridApiKey = process.env.SENDGRID_API_KEY?.trim();
+  fromEmail = process.env.SENDGRID_FROM_EMAIL?.trim() || 'noreply@remeraslisas.com';
+  fromName = process.env.SENDGRID_FROM_NAME?.trim() || 'Remeras Lisas';
+  frontendUrl = process.env.FRONTEND_URL?.trim() || 'http://localhost:3001';
+
+  // Logs de diagnóstico
+  console.log('\n📧 Diagnóstico SendGrid:');
+  console.log('   Variable SENDGRID_API_KEY existe:', process.env.SENDGRID_API_KEY ? 'SI' : 'NO');
+  console.log('   Longitud de la key:', process.env.SENDGRID_API_KEY ? process.env.SENDGRID_API_KEY.length : 0);
+  console.log('   Primeros caracteres:', process.env.SENDGRID_API_KEY ? process.env.SENDGRID_API_KEY.substring(0, 15) + '...' : 'N/A');
+
+  if (sendGridApiKey) {
+    // Validar formato de API key de SendGrid (debe empezar con SG.)
+    if (!sendGridApiKey.startsWith('SG.')) {
+      console.error('❌ Error: SENDGRID_API_KEY no tiene el formato correcto. Debe empezar con "SG."');
+      console.error('   Key recibida:', sendGridApiKey.substring(0, 20) + '...');
+    } else {
+      sgMail.setApiKey(sendGridApiKey);
+      console.log('✅ SendGrid configurado correctamente');
+      console.log('   Email FROM:', fromEmail);
+    }
+  } else {
+    console.warn('⚠️  SENDGRID_API_KEY no está configurada. Los emails se mostrarán en consola.');
+    console.warn('   Verifica que el archivo .env esté en la carpeta server/');
+    console.warn('   Verifica que SENDGRID_API_KEY esté definida en el .env');
+  }
+  console.log('');
+};
 
 /**
- * Email Service using SendGrid
+ * Enviar email genérico
  */
-class EmailService {
-  constructor() {
-    if (process.env.SENDGRID_API_KEY) {
-      sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+const sendEmail = async (to, subject, html, text = '') => {
+  try {
+    // Si SendGrid no está configurado, solo logear
+    if (!sendGridApiKey) {
+      console.log('📧 [MOCK EMAIL] ------------------');
+      console.log(`   Para: ${to}`);
+      console.log(`   Asunto: ${subject}`);
+      console.log(`   Contenido: ${text.substring(0, 100)}...`);
+      console.log('----------------------------------');
+      return true;
     }
-  }
 
-  /**
-   * Send email
-   */
-  async sendEmail({ to, subject, html, text }) {
-    try {
-      if (!process.env.SENDGRID_API_KEY) {
-        console.log('📧 Email would be sent (SendGrid not configured):', { to, subject });
-        return { success: true, message: 'Email service not configured' };
-      }
-
-      const msg = {
-        to,
-        from: {
-          email: process.env.SENDGRID_FROM_EMAIL,
-          name: process.env.SENDGRID_FROM_NAME || 'Remeras Lisas',
-        },
-        subject,
-        text,
-        html,
-      };
-
-      await sgMail.send(msg);
-      return { success: true, message: 'Email sent successfully' };
-    } catch (error) {
-      console.error('Error sending email:', error);
-      return { success: false, message: error.message };
-    }
-  }
-
-  /**
-   * Send welcome email
-   */
-  async sendWelcomeEmail(user) {
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>¡Bienvenido a Remeras Lisas!</h2>
-        <p>Hola ${user.name},</p>
-        <p>Tu email ha sido verificado. ¡Gracias por unirte a nuestra tienda!</p>
-        <p>Ya puedes comenzar a comprar y seguir tus pedidos.</p>
-        <p>Saludos,<br>El equipo de Remeras Lisas</p>
-      </div>
-    `;
-
-    return this.sendEmail({
-      to: user.email,
-      subject: 'Bienvenido a Remeras Lisas',
-      html,
-      text: `Hola ${user.name}, tu email ha sido verificado. Bienvenido a Remeras Lisas.`,
-    });
-  }
-
-  /**
-   * Send email verification code (6 digits)
-   */
-  async sendEmailVerificationCode(user, code) {
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Verifica tu email</h2>
-        <p>Hola ${user.name},</p>
-        <p>Tu código de verificación es:</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <span style="font-size: 32px; letter-spacing: 6px; font-weight: bold; background: #f5f5f5; padding: 12px 18px; border-radius: 6px;">${code}</span>
-        </div>
-        <p>Este enlace expirará en 24 horas.</p>
-        <p>Saludos,<br>El equipo de Remeras Lisas</p>
-      </div>
-    `;
-
-    return this.sendEmail({
-      to: user.email,
-      subject: 'Código de verificación - Remeras Lisas',
-      html,
-      text: `Tu código de verificación es: ${code}. Expira en 24 horas.`,
-    });
-  }
-
-  /**
-   * Send order confirmation email
-   */
-  async sendOrderConfirmation(order, user) {
-    const orderUrl = `${process.env.FRONTEND_URL}/orders/${order._id}`;
-    
-    const itemsHtml = order.items.map(item => {
-      // Use the image from order item, or try to get it from populated product
-      const imageUrl = item.image || 
-                       (item.product?.images?.[0]?.url) || 
-                       (item.product?.images?.[0]) || 
-                       '';
-      const productName = item.name || item.product?.name || 'Producto';
-      
-      return `
-      <tr>
-        <td style="padding: 10px; border-bottom: 1px solid #ddd;">
-          ${imageUrl ? `<img src="${imageUrl}" alt="${productName}" style="width: 60px; height: 60px; object-fit: cover; margin-right: 10px;">` : ''}
-          ${productName}
-        </td>
-        <td style="padding: 10px; border-bottom: 1px solid #ddd;">${item.quantity}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #ddd;">$${item.price.toFixed(2)}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #ddd;">$${(item.price * item.quantity).toFixed(2)}</td>
-      </tr>
-    `;
-    }).join('');
-
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>¡Pedido Confirmado!</h2>
-        <p>Hola ${user.name},</p>
-        <p>Tu pedido ha sido recibido y está siendo procesado.</p>
-        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
-          <h3>Detalles del Pedido</h3>
-          <p><strong>Número de Pedido:</strong> #${order.orderNumber}</p>
-          <p><strong>Fecha:</strong> ${new Date(order.createdAt).toLocaleDateString('es-AR')}</p>
-          <p><strong>Estado:</strong> ${order.status}</p>
-          <p><strong>Total:</strong> $${order.total.toFixed(2)}</p>
-        </div>
-        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-          <thead>
-            <tr style="background-color: #f5f5f5;">
-              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Producto</th>
-              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Cantidad</th>
-              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Precio</th>
-              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Subtotal</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsHtml}
-          </tbody>
-        </table>
-        <p style="text-align: center; margin: 30px 0;">
-          <a href="${orderUrl}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
-            Ver Pedido
-          </a>
-        </p>
-        <p>Saludos,<br>El equipo de Remeras Lisas</p>
-      </div>
-    `;
-
-    return this.sendEmail({
-      to: user.email,
-      subject: `Pedido Confirmado #${order.orderNumber} - Remeras Lisas`,
-      html,
-      text: `Tu pedido #${order.orderNumber} ha sido confirmado. Total: $${order.total.toFixed(2)}`,
-    });
-  }
-
-  /**
-   * Send order status update email
-   */
-  async sendOrderStatusUpdate(order, user) {
-    const orderUrl = `${process.env.FRONTEND_URL}/orders/${order._id}`;
-    
-    const statusMessages = {
-      confirmed: 'Tu pedido ha sido confirmado y está siendo preparado.',
-      preparing: 'Tu pedido está siendo preparado.',
-      shipped: 'Tu pedido ha sido enviado.',
-      delivered: 'Tu pedido ha sido entregado. ¡Esperamos que disfrutes tu compra!',
-      cancelled: 'Tu pedido ha sido cancelado.',
+    const msg = {
+      to,
+      from: {
+        email: fromEmail,
+        name: fromName
+      },
+      subject,
+      text,
+      html
     };
 
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Actualización de Pedido</h2>
-        <p>Hola ${user.name},</p>
-        <p>El estado de tu pedido ha cambiado:</p>
-        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Número de Pedido:</strong> #${order.orderNumber}</p>
-          <p><strong>Nuevo Estado:</strong> ${order.status}</p>
-          <p>${statusMessages[order.status] || 'El estado de tu pedido ha sido actualizado.'}</p>
-        </div>
-        <p style="text-align: center; margin: 30px 0;">
-          <a href="${orderUrl}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
-            Ver Pedido
-          </a>
-        </p>
-        <p>Saludos,<br>El equipo de Remeras Lisas</p>
-      </div>
-    `;
-
-    return this.sendEmail({
-      to: user.email,
-      subject: `Actualización de Pedido #${order.orderNumber} - Remeras Lisas`,
-      html,
-      text: `Tu pedido #${order.orderNumber} ahora está: ${order.status}`,
-    });
-  }
-
-  /**
-   * Send password reset email
-   */
-  async sendPasswordReset(user, resetToken) {
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+    await sgMail.send(msg);
+    console.log(`✅ Email enviado exitosamente a ${to}: ${subject}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error enviando email:', error.message);
     
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Restablecer Contraseña</h2>
-        <p>Hola ${user.name},</p>
-        <p>Has solicitado restablecer tu contraseña. Haz clic en el siguiente enlace para crear una nueva contraseña:</p>
-        <p style="text-align: center; margin: 30px 0;">
-          <a href="${resetUrl}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
-            Restablecer Contraseña
-          </a>
-        </p>
-        <p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
-        <p>${resetUrl}</p>
-        <p>Este enlace expirará en 1 hora.</p>
-        <p>Si no solicitaste este cambio, ignora este email.</p>
-        <p>Saludos,<br>El equipo de Remeras Lisas</p>
-      </div>
-    `;
-
-    return this.sendEmail({
-      to: user.email,
-      subject: 'Restablecer Contraseña - Remeras Lisas',
-      html,
-      text: `Restablecer contraseña: ${resetUrl}`,
-    });
+    if (error.response) {
+      const errorBody = error.response.body;
+      console.error('📋 Detalles del error:', JSON.stringify(errorBody, null, 2));
+      
+      // Mensajes de error más específicos
+      if (error.response.statusCode === 401) {
+        console.error('🔑 Error de autenticación con SendGrid:');
+        console.error('   - Verifica que SENDGRID_API_KEY sea correcta');
+        console.error('   - La API key debe empezar con "SG."');
+        console.error('   - Asegúrate de que no tenga espacios al inicio o final');
+        console.error(`   - API Key actual: ${sendGridApiKey ? sendGridApiKey.substring(0, 10) + '...' : 'NO CONFIGURADA'}`);
+      } else if (error.response.statusCode === 403) {
+        console.error('🚫 Error de permisos con SendGrid:');
+        console.error('   - Verifica que el email "from" esté verificado en SendGrid');
+        console.error(`   - Email from actual: ${fromEmail}`);
+        console.error('   - Ve a SendGrid > Settings > Sender Authentication');
+      }
+    }
+    
+    return false;
   }
-}
+};
 
-module.exports = new EmailService();
+/**
+ * Enviar código de verificación de email
+ */
+export const sendVerificationCode = async (email, name, code) => {
+  const subject = 'Código de verificación - Remeras Lisas';
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .code-box { background: #f4f4f4; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0; }
+        .code { font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #007bff; }
+        .footer { margin-top: 30px; font-size: 12px; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h2>¡Bienvenido a Remeras Lisas!</h2>
+        <p>Hola ${name},</p>
+        <p>Gracias por registrarte. Para completar tu registro, por favor ingresa el siguiente código de verificación:</p>
+        <div class="code-box">
+          <div class="code">${code}</div>
+        </div>
+        <p>Este código expirará en 10 minutos.</p>
+        <p>Si no solicitaste este código, puedes ignorar este email.</p>
+        <div class="footer">
+          <p>Saludos,<br>El equipo de Remeras Lisas</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+  const text = `Bienvenido a Remeras Lisas!\n\nTu código de verificación es: ${code}\n\nEste código expirará en 10 minutos.`;
 
+  return await sendEmail(email, subject, html, text);
+};
+
+/**
+ * Enviar email de bienvenida con link de verificación
+ */
+export const sendWelcomeEmail = async (user, verificationToken) => {
+  const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
+  const subject = '¡Bienvenido a Remeras Lisas! Verifica tu email';
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .button { display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .footer { margin-top: 30px; font-size: 12px; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h2>¡Bienvenido a Remeras Lisas!</h2>
+        <p>Hola ${user.name},</p>
+        <p>Gracias por registrarte. Para completar tu registro, por favor verifica tu email haciendo clic en el siguiente botón:</p>
+        <p>
+          <a href="${verificationUrl}" class="button">Verificar Email</a>
+        </p>
+        <p>O copia y pega este enlace en tu navegador:</p>
+        <p style="word-break: break-all;">${verificationUrl}</p>
+        <p>Este enlace expirará en 24 horas.</p>
+        <p>Si no te registraste en Remeras Lisas, puedes ignorar este email.</p>
+        <div class="footer">
+          <p>Saludos,<br>El equipo de Remeras Lisas</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+  const text = `¡Bienvenido a Remeras Lisas!\n\nPara verificar tu email, visita: ${verificationUrl}\n\nEste enlace expirará en 24 horas.`;
+
+  return await sendEmail(user.email, subject, html, text);
+};
+
+/**
+ * Enviar email de bienvenida después de verificar el email
+ */
+export const sendWelcomeEmailAfterVerification = async (email, name) => {
+  const subject = '¡Bienvenido a Remeras Lisas!';
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .success-box { background: #d4edda; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745; }
+        .button { display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .footer { margin-top: 30px; font-size: 12px; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h2>¡Email verificado exitosamente!</h2>
+        <p>Hola ${name},</p>
+        <div class="success-box">
+          <p><strong>¡Tu cuenta ha sido verificada correctamente!</strong></p>
+          <p>Ya puedes disfrutar de todos nuestros productos y servicios.</p>
+        </div>
+        <p>Gracias por unirte a Remeras Lisas. ¡Esperamos que disfrutes tu experiencia de compra!</p>
+        <p>
+          <a href="${frontendUrl}" class="button">Explorar productos</a>
+        </p>
+        <div class="footer">
+          <p>Saludos,<br>El equipo de Remeras Lisas</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+  const text = `¡Bienvenido a Remeras Lisas!\n\nTu cuenta ha sido verificada correctamente. Ya puedes disfrutar de todos nuestros productos.\n\nVisita: ${frontendUrl}`;
+
+  return await sendEmail(email, subject, html, text);
+};
+
+/**
+ * Enviar email de verificación (reenvío)
+ */
+export const sendEmailVerification = async (user, verificationToken) => {
+  const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
+  const subject = 'Verifica tu email - Remeras Lisas';
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .button { display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .footer { margin-top: 30px; font-size: 12px; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h2>Verifica tu email</h2>
+        <p>Hola ${user.name},</p>
+        <p>Has solicitado un nuevo enlace de verificación. Haz clic en el siguiente botón para verificar tu email:</p>
+        <p>
+          <a href="${verificationUrl}" class="button">Verificar Email</a>
+        </p>
+        <p>O copia y pega este enlace en tu navegador:</p>
+        <p style="word-break: break-all;">${verificationUrl}</p>
+        <p>Este enlace expirará en 24 horas.</p>
+        <div class="footer">
+          <p>Saludos,<br>El equipo de Remeras Lisas</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+  const text = `Verifica tu email en Remeras Lisas\n\nPara verificar tu email, visita: ${verificationUrl}\n\nEste enlace expirará en 24 horas.`;
+
+  return await sendEmail(user.email, subject, html, text);
+};
+
+/**
+ * Enviar email de recuperación de contraseña con código de 6 dígitos
+ */
+export const sendPasswordReset = async (user, resetCode) => {
+  try {
+    console.log(`📧 Preparando email de recuperación para: ${user.email}`);
+    console.log(`📧 Código a enviar: ${resetCode}`);
+    
+    const subject = 'Código de recuperación de contraseña - Remeras Lisas';
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .code-box { background: #f4f4f4; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0; }
+          .code { font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #007bff; }
+          .footer { margin-top: 30px; font-size: 12px; color: #666; }
+          .warning { color: #dc3545; font-size: 14px; margin-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h2>Recuperación de contraseña</h2>
+          <p>Hola ${user.name},</p>
+          <p>Recibimos una solicitud para restablecer tu contraseña. Por favor ingresa el siguiente código de verificación:</p>
+          <div class="code-box">
+            <div class="code">${resetCode}</div>
+          </div>
+          <p>Este código expirará en 10 minutos.</p>
+          <p class="warning">Si no solicitaste este cambio, puedes ignorar este email.</p>
+          <div class="footer">
+            <p>Saludos,<br>El equipo de Remeras Lisas</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    const text = `Recuperación de contraseña\n\nHola ${user.name},\n\nTu código de recuperación es: ${resetCode}\n\nEste código expirará en 10 minutos.\n\nSi no solicitaste este cambio, puedes ignorar este email.`;
+
+    const result = await sendEmail(user.email, subject, html, text);
+    
+    if (result) {
+      console.log(`✅ Email de recuperación enviado exitosamente a: ${user.email}`);
+    } else {
+      console.error(`❌ Error: No se pudo enviar el email de recuperación a: ${user.email}`);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('❌ Error en sendPasswordReset:', error);
+    return false;
+  }
+};
+
+// Alias para compatibilidad
+export const sendPasswordResetEmail = sendPasswordReset;
+
+/**
+ * Enviar notificación de confirmación de pedido
+ */
+export const sendOrderConfirmationEmail = async (email, name, pedido) => {
+  const subject = `Confirmación de pedido #${pedido.codigoPedido} - Remeras Lisas`;
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .order-info { background: #f4f4f4; padding: 15px; border-radius: 8px; margin: 20px 0; }
+        .product-item { padding: 10px 0; border-bottom: 1px solid #ddd; }
+        .total { font-size: 18px; font-weight: bold; margin-top: 15px; }
+        .footer { margin-top: 30px; font-size: 12px; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h2>¡Pedido confirmado!</h2>
+        <p>Hola ${name},</p>
+        <p>Tu pedido ha sido confirmado exitosamente. Aquí están los detalles:</p>
+        <div class="order-info">
+          <p><strong>Código de pedido:</strong> ${pedido.codigoPedido}</p>
+          <p><strong>Estado:</strong> ${pedido.estadoPedido}</p>
+          <p><strong>Fecha:</strong> ${new Date(pedido.createdAt).toLocaleDateString('es-AR')}</p>
+          <h3>Productos:</h3>
+          ${pedido.productos.map(item => `
+            <div class="product-item">
+              <p><strong>${item.producto?.nombre || 'Producto'}</strong> - Cantidad: ${item.cantidad} - $${item.precio}</p>
+            </div>
+          `).join('')}
+          <div class="total">
+            <p>Subtotal: $${pedido.subtotal}</p>
+            <p>Envío: $${pedido.costoEnvio}</p>
+            <p>Impuestos: $${pedido.impuestos}</p>
+            <p>Total: $${pedido.total}</p>
+          </div>
+        </div>
+        <p>Te notificaremos cuando tu pedido sea enviado.</p>
+        <div class="footer">
+          <p>Saludos,<br>El equipo de Remeras Lisas</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+  const text = `Pedido confirmado #${pedido.codigoPedido}\n\nTotal: $${pedido.total}\n\nGracias por tu compra!`;
+
+  return await sendEmail(email, subject, html, text);
+};
+
+/**
+ * Enviar notificación de cambio de estado de pedido
+ */
+export const sendOrderStatusUpdateEmail = async (email, name, pedido, nuevoEstado) => {
+  const estados = {
+    'pendiente': 'Pendiente',
+    'procesando': 'En procesamiento',
+    'enviado': 'Enviado',
+    'entregado': 'Entregado',
+    'cancelado': 'Cancelado'
+  };
+
+  const subject = `Actualización de pedido #${pedido.codigoPedido} - Remeras Lisas`;
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .status-box { background: #e7f3ff; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #007bff; }
+        .footer { margin-top: 30px; font-size: 12px; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h2>Actualización de tu pedido</h2>
+        <p>Hola ${name},</p>
+        <p>El estado de tu pedido ha sido actualizado:</p>
+        <div class="status-box">
+          <p><strong>Pedido:</strong> #${pedido.codigoPedido}</p>
+          <p><strong>Nuevo estado:</strong> ${estados[nuevoEstado] || nuevoEstado}</p>
+        </div>
+        ${nuevoEstado === 'enviado' ? '<p>Tu pedido ha sido enviado. Pronto recibirás más información de seguimiento.</p>' : ''}
+        ${nuevoEstado === 'entregado' ? '<p>¡Tu pedido ha sido entregado! Esperamos que disfrutes tus productos.</p>' : ''}
+        ${nuevoEstado === 'cancelado' ? '<p>Tu pedido ha sido cancelado. Si tienes alguna pregunta, contáctanos.</p>' : ''}
+        <div class="footer">
+          <p>Saludos,<br>El equipo de Remeras Lisas</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+  const text = `Actualización de pedido #${pedido.codigoPedido}\n\nNuevo estado: ${estados[nuevoEstado] || nuevoEstado}`;
+
+  return await sendEmail(email, subject, html, text);
+};
+
+export default {
+  sendVerificationCode,
+  sendWelcomeEmail,
+  sendWelcomeEmailAfterVerification,
+  sendEmailVerification,
+  sendPasswordReset,
+  sendPasswordResetEmail,
+  sendOrderConfirmationEmail,
+  sendOrderStatusUpdateEmail
+};
 
