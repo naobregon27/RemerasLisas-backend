@@ -1,10 +1,11 @@
-import mercadopago from 'mercadopago';
+import { MercadoPagoConfig, Preference, Payment, MerchantOrder, Refund } from 'mercadopago';
 import { mercadoPagoConfig } from '../config/mercadoPago.js';
 import Local from '../models/Local.js';
 
 /**
  * Servicio de Mercado Pago
  * Maneja toda la lógica de integración con Mercado Pago
+ * Usa el SDK v2.1.0+ con la nueva API
  */
 
 class MercadoPagoService {
@@ -15,6 +16,7 @@ class MercadoPagoService {
   constructor(accessToken = null) {
     this.accessToken = accessToken || mercadoPagoConfig.accessToken;
     this.currentToken = null;
+    this.client = null;
     
     if (this.accessToken) {
       this.configurarToken(this.accessToken);
@@ -27,7 +29,12 @@ class MercadoPagoService {
    */
   configurarToken(accessToken) {
     if (accessToken && accessToken !== this.currentToken) {
-      mercadopago.configurations.setAccessToken(accessToken);
+      this.client = new MercadoPagoConfig({
+        accessToken: accessToken,
+        options: {
+          timeout: 5000,
+        }
+      });
       this.currentToken = accessToken;
     }
   }
@@ -35,6 +42,7 @@ class MercadoPagoService {
   /**
    * Obtener cliente configurado con un token específico
    * @param {string} accessToken - Token de acceso (opcional)
+   * @returns {MercadoPagoConfig} Cliente configurado
    */
   getClient(accessToken = null) {
     const token = accessToken || this.accessToken;
@@ -43,11 +51,11 @@ class MercadoPagoService {
     }
     
     // Configurar el token si es diferente
-    if (token !== this.currentToken) {
+    if (token !== this.currentToken || !this.client) {
       this.configurarToken(token);
     }
     
-    return mercadopago;
+    return this.client;
   }
 
   /**
@@ -86,9 +94,9 @@ class MercadoPagoService {
         }
       }
       
-      // Configurar el token
-      this.configurarToken(accessToken);
-      const preferenceClient = new mercadopago.Preference();
+      // Configurar el cliente con el token
+      const client = this.getClient(accessToken);
+      const preference = new Preference(client);
 
       // Preparar items para Mercado Pago
       const items = pedido.productos.map(item => ({
@@ -160,12 +168,12 @@ class MercadoPagoService {
         }
       };
 
-      const response = await preferenceClient.create(preferenceData);
+      const response = await preference.create({ body: preferenceData });
       
       return {
-        preferenceId: response.body.id,
-        initPoint: response.body.init_point,
-        sandboxInitPoint: response.body.sandbox_init_point
+        preferenceId: response.id,
+        initPoint: response.init_point,
+        sandboxInitPoint: response.sandbox_init_point
       };
 
     } catch (error) {
@@ -181,10 +189,11 @@ class MercadoPagoService {
    */
   async obtenerPago(paymentId) {
     try {
-      this.getClient(); // Configurar token
-      const payment = new mercadopago.Payment();
-      const response = await payment.getById(paymentId);
-      return response.body;
+      const client = this.getClient(); // Configurar token
+      const payment = new Payment(client);
+      const response = await payment.get({ id: paymentId });
+      // La nueva API devuelve directamente el objeto, no response.body
+      return response;
     } catch (error) {
       console.error('Error obteniendo pago:', error);
       throw new Error(`Error al obtener información del pago: ${error.message}`);
@@ -198,10 +207,11 @@ class MercadoPagoService {
    */
   async obtenerOrden(merchantOrderId) {
     try {
-      this.getClient(); // Configurar token
-      const merchantOrder = new mercadopago.MerchantOrder();
-      const response = await merchantOrder.getById(merchantOrderId);
-      return response.body;
+      const client = this.getClient(); // Configurar token
+      const merchantOrder = new MerchantOrder(client);
+      const response = await merchantOrder.get({ merchantOrderId: merchantOrderId });
+      // La nueva API devuelve directamente el objeto
+      return response;
     } catch (error) {
       console.error('Error obteniendo orden:', error);
       throw new Error(`Error al obtener información de la orden: ${error.message}`);
@@ -216,11 +226,12 @@ class MercadoPagoService {
    */
   async procesarReembolso(paymentId, amount = null) {
     try {
-      this.getClient(); // Configurar token
-      const refund = new mercadopago.PaymentRefund();
-      const refundData = amount ? { amount } : {};
-      const response = await refund.create({ payment_id: paymentId, body: refundData });
-      return response.body;
+      const client = this.getClient(); // Configurar token
+      const refund = new Refund(client);
+      const refundBody = amount ? { amount: amount } : {};
+      const response = await refund.create({ paymentId: paymentId, body: refundBody });
+      // La nueva API devuelve directamente el objeto
+      return response;
     } catch (error) {
       console.error('Error procesando reembolso:', error);
       throw new Error(`Error al procesar reembolso: ${error.message}`);
@@ -332,4 +343,3 @@ class MercadoPagoService {
 }
 
 export default MercadoPagoService;
-
