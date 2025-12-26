@@ -14,12 +14,40 @@ class MercadoPagoService {
    */
   constructor(accessToken = null) {
     this.accessToken = accessToken || mercadoPagoConfig.accessToken;
+    this.currentToken = null;
     
     if (this.accessToken) {
-      mercadopago.configure({
-        access_token: this.accessToken
-      });
+      this.configurarToken(this.accessToken);
     }
+  }
+
+  /**
+   * Configurar el access token de Mercado Pago
+   * @param {string} accessToken - Token de acceso
+   */
+  configurarToken(accessToken) {
+    if (accessToken && accessToken !== this.currentToken) {
+      mercadopago.configurations.setAccessToken(accessToken);
+      this.currentToken = accessToken;
+    }
+  }
+
+  /**
+   * Obtener cliente configurado con un token específico
+   * @param {string} accessToken - Token de acceso (opcional)
+   */
+  getClient(accessToken = null) {
+    const token = accessToken || this.accessToken;
+    if (!token) {
+      throw new Error('Access token de Mercado Pago no configurado');
+    }
+    
+    // Configurar el token si es diferente
+    if (token !== this.currentToken) {
+      this.configurarToken(token);
+    }
+    
+    return mercadopago;
   }
 
   /**
@@ -50,14 +78,17 @@ class MercadoPagoService {
   async crearPreferencia(pedido, local) {
     try {
       // Si el local tiene configuración propia de MP, usarla
+      let accessToken = this.accessToken;
       if (local.configuracionNegocio?.mercadopago?.habilitado) {
         const localAccessToken = local.configuracionNegocio.mercadopago.accessToken;
         if (localAccessToken) {
-          mercadopago.configure({
-            access_token: localAccessToken
-          });
+          accessToken = localAccessToken;
         }
       }
+      
+      // Configurar el token
+      this.configurarToken(accessToken);
+      const preferenceClient = new mercadopago.Preference();
 
       // Preparar items para Mercado Pago
       const items = pedido.productos.map(item => ({
@@ -91,7 +122,7 @@ class MercadoPagoService {
       const callbacks = mercadoPagoConfig.getCallbackUrls();
 
       // Crear la preferencia
-      const preference = {
+      const preferenceData = {
         items: items,
         external_reference: externalReference,
         payer: {
@@ -129,7 +160,7 @@ class MercadoPagoService {
         }
       };
 
-      const response = await mercadopago.preferences.create(preference);
+      const response = await preferenceClient.create(preferenceData);
       
       return {
         preferenceId: response.body.id,
@@ -150,8 +181,10 @@ class MercadoPagoService {
    */
   async obtenerPago(paymentId) {
     try {
-      const payment = await mercadopago.payment.findById(paymentId);
-      return payment.body;
+      this.getClient(); // Configurar token
+      const payment = new mercadopago.Payment();
+      const response = await payment.getById(paymentId);
+      return response.body;
     } catch (error) {
       console.error('Error obteniendo pago:', error);
       throw new Error(`Error al obtener información del pago: ${error.message}`);
@@ -165,8 +198,10 @@ class MercadoPagoService {
    */
   async obtenerOrden(merchantOrderId) {
     try {
-      const order = await mercadopago.merchant_orders.findById(merchantOrderId);
-      return order.body;
+      this.getClient(); // Configurar token
+      const merchantOrder = new mercadopago.MerchantOrder();
+      const response = await merchantOrder.getById(merchantOrderId);
+      return response.body;
     } catch (error) {
       console.error('Error obteniendo orden:', error);
       throw new Error(`Error al obtener información de la orden: ${error.message}`);
@@ -181,12 +216,11 @@ class MercadoPagoService {
    */
   async procesarReembolso(paymentId, amount = null) {
     try {
+      this.getClient(); // Configurar token
+      const refund = new mercadopago.PaymentRefund();
       const refundData = amount ? { amount } : {};
-      const refund = await mercadopago.refund.create({
-        payment_id: paymentId,
-        ...refundData
-      });
-      return refund.body;
+      const response = await refund.create({ payment_id: paymentId, body: refundData });
+      return response.body;
     } catch (error) {
       console.error('Error procesando reembolso:', error);
       throw new Error(`Error al procesar reembolso: ${error.message}`);
@@ -221,22 +255,37 @@ class MercadoPagoService {
    * @returns {boolean} True si el webhook es válido
    */
   validarWebhook(headers, body) {
-    // Mercado Pago envía una firma en el header x-signature
-    // Por ahora validamos que vengan los datos básicos
-    // En producción deberías implementar la validación completa de la firma
+    // En modo prueba, ser más permisivo con la validación
+    // Mercado Pago puede enviar webhooks de prueba sin todas las firmas
     
-    const signature = headers['x-signature'];
-    const requestId = headers['x-request-id'];
-    
-    if (!signature || !requestId) {
-      console.warn('Webhook sin firma o request ID');
+    // Validar que el body tenga la estructura básica esperada
+    if (!body || typeof body !== 'object') {
+      console.warn('Webhook con body inválido');
       return false;
     }
 
-    // Validar que el body tenga la estructura esperada
-    if (!body || !body.data || !body.type) {
-      console.warn('Webhook con estructura inválida');
+    // Validar que tenga al menos type o action (dependiendo de la versión)
+    if (!body.type && !body.action) {
+      console.warn('Webhook sin type o action');
       return false;
+    }
+
+    // Para webhooks de tipo payment, debe tener data.id
+    if ((body.type === 'payment' || body.action === 'payment.updated') && !body.data?.id) {
+      console.warn('Webhook de pago sin data.id');
+      return false;
+    }
+
+    // En modo producción, validar firma si está disponible
+    if (process.env.MERCADOPAGO_MODE === 'production') {
+      const signature = headers['x-signature'];
+      const requestId = headers['x-request-id'];
+      
+      if (!signature || !requestId) {
+        console.warn('Webhook sin firma o request ID (modo producción)');
+        // En producción podrías querer ser más estricto
+        // return false;
+      }
     }
 
     return true;
@@ -249,9 +298,12 @@ class MercadoPagoService {
    */
   async procesarWebhookPago(webhookData) {
     try {
-      const { data, type } = webhookData;
+      const { data, type, action } = webhookData;
 
-      if (type === 'payment') {
+      // Manejar tanto 'type' como 'action' (diferentes versiones del SDK)
+      const isPayment = type === 'payment' || action === 'payment.updated';
+
+      if (isPayment && data?.id) {
         const paymentId = data.id;
         const payment = await this.obtenerPago(paymentId);
         

@@ -99,9 +99,10 @@ export const webhookMercadoPago = asyncHandler(async (req, res) => {
     
     console.log('🔔 Webhook recibido:', JSON.stringify(webhookData, null, 2));
 
-    // Solo procesamos notificaciones de pago
-    if (webhookData.type !== 'payment') {
-      console.log('Tipo de notificación ignorada:', webhookData.type);
+    // Solo procesamos notificaciones de pago (puede venir como type='payment' o action='payment.updated')
+    const isPayment = webhookData.type === 'payment' || webhookData.action === 'payment.updated';
+    if (!isPayment) {
+      console.log('Tipo de notificación ignorada:', webhookData.type || webhookData.action);
       return res.status(200).json({ message: 'Notificación ignorada' });
     }
 
