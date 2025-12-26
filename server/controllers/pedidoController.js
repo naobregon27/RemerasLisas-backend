@@ -12,49 +12,106 @@ import MercadoPagoService from '../services/mercadoPagoService.js';
  */
 const crearPedido = asyncHandler(async (req, res) => {
   const {
+    productos: productosBody,
     direccionEnvio,
     metodoPago,
-    impuestos,
-    costoEnvio,
+    impuestos: impuestosBody,
+    costoEnvio: costoEnvioBody,
+    subtotal: subtotalBody,
+    descuento: descuentoBody,
+    total: totalBody,
     notas
   } = req.body;
 
-  // Obtener el carrito del usuario
-  const carrito = await Carrito.findOne({ usuario: req.user._id })
-    .populate({
-      path: 'productos.producto',
-      select: 'nombre precio imagenes stock slug categoria local',
-    });
+  let productos = [];
+  let subtotal = 0;
+  let local = null;
+  let impuestosCalculados = 0;
+  let costoEnvioCalculado = 0;
+  let descuento = 0;
+  let total = 0;
 
-  if (!carrito || carrito.productos.length === 0) {
-    res.status(400);
-    throw new Error('No hay productos en el carrito');
+  // Si los productos vienen en el body, usarlos directamente
+  if (productosBody && Array.isArray(productosBody) && productosBody.length > 0) {
+    productos = productosBody.map(item => ({
+      producto: item.producto || item.productoId,
+      cantidad: item.cantidad,
+      variante: item.variante || {},
+      precio: item.precio,
+      subtotal: item.subtotal
+    }));
+
+    // Obtener el local del primer producto y verificar que todos los productos sean del mismo local
+    const primerProductoId = productos[0].producto;
+    const primerProducto = await Producto.findById(primerProductoId).select('local nombre');
+    if (!primerProducto) {
+      res.status(404);
+      throw new Error(`Producto no encontrado: ${primerProductoId}`);
+    }
+    if (primerProducto.local) {
+      local = primerProducto.local;
+      
+      // Verificar que todos los productos sean del mismo local
+      for (let i = 1; i < productos.length; i++) {
+        const productoId = productos[i].producto;
+        const producto = await Producto.findById(productoId).select('local nombre');
+        if (!producto) {
+          res.status(404);
+          throw new Error(`Producto no encontrado: ${productoId}`);
+        }
+        if (!producto.local || producto.local.toString() !== local.toString()) {
+          res.status(400);
+          throw new Error(`Los productos deben ser del mismo local. El producto ${producto.nombre} pertenece a otro local.`);
+        }
+      }
+    }
+
+    // Usar valores del body si están presentes, sino calcular
+    subtotal = subtotalBody || productos.reduce((acc, item) => acc + item.subtotal, 0);
+    impuestosCalculados = impuestosBody || (subtotal * 0.10); // 10% por defecto
+    costoEnvioCalculado = costoEnvioBody || 0;
+    descuento = descuentoBody || 0;
+    total = totalBody || (subtotal + impuestosCalculados + costoEnvioCalculado - descuento);
+  } else {
+    // Si no hay productos en el body, buscar en el carrito (comportamiento original)
+    const carrito = await Carrito.findOne({ usuario: req.user._id })
+      .populate({
+        path: 'productos.producto',
+        select: 'nombre precio imagenes stock slug categoria local',
+      });
+
+    if (!carrito || carrito.productos.length === 0) {
+      res.status(400);
+      throw new Error('No hay productos en el carrito');
+    }
+
+    // Preparar los productos para el pedido desde el carrito
+    productos = carrito.productos.map(item => ({
+      producto: item.producto._id,
+      cantidad: item.cantidad,
+      variante: item.variante || {},
+      precio: item.precioUnitario,
+      subtotal: item.subtotal
+    }));
+
+    // Calcular subtotal
+    subtotal = carrito.productos.reduce((acc, item) => acc + item.subtotal, 0);
+    
+    // Calcular total
+    descuento = 0; // Este valor podría venir de un cupón o promoción
+    impuestosCalculados = impuestosBody || (subtotal * 0.10); // 10% por defecto o el valor proporcionado
+    costoEnvioCalculado = costoEnvioBody || 10; // Valor por defecto o el proporcionado
+    total = subtotal + impuestosCalculados + costoEnvioCalculado - descuento;
+    local = carrito.local;
   }
 
-  // Preparar los productos para el pedido
-  const productos = carrito.productos.map(item => ({
-    producto: item.producto._id,
-    cantidad: item.cantidad,
-    variante: item.variante || {},
-    precio: item.precioUnitario,
-    subtotal: item.subtotal
-  }));
-
-  // Calcular subtotal
-  const subtotal = carrito.productos.reduce((acc, item) => acc + item.subtotal, 0);
-  
-  // Calcular total
-  const descuento = 0; // Este valor podría venir de un cupón o promoción
-  const impuestosCalculados = impuestos || (subtotal * 0.10); // 10% por defecto o el valor proporcionado
-  const costoEnvioCalculado = costoEnvio || 10; // Valor por defecto o el proporcionado
-  const total = subtotal + impuestosCalculados + costoEnvioCalculado - descuento;
-
   // Verificar stock disponible
-  for (const item of carrito.productos) {
-    const producto = await Producto.findById(item.producto._id);
+  for (const item of productos) {
+    const productoId = typeof item.producto === 'object' ? item.producto._id || item.producto : item.producto;
+    const producto = await Producto.findById(productoId);
     if (!producto) {
       res.status(404);
-      throw new Error(`Producto no encontrado: ${item.producto._id}`);
+      throw new Error(`Producto no encontrado: ${productoId}`);
     }
     if (producto.stock < item.cantidad) {
       res.status(400);
@@ -63,15 +120,22 @@ const crearPedido = asyncHandler(async (req, res) => {
   }
 
   // Actualizar stock
-  for (const item of carrito.productos) {
+  for (const item of productos) {
+    const productoId = typeof item.producto === 'object' ? item.producto._id || item.producto : item.producto;
     await Producto.findByIdAndUpdate(
-      item.producto._id,
+      productoId,
       { $inc: { stock: -item.cantidad } }
     );
   }
 
   // Generar código único de pedido
   const codigoPedido = Pedido.generarCodigoPedido();
+
+  // Validar que tenemos un local
+  if (!local) {
+    res.status(400);
+    throw new Error('No se pudo determinar el local del pedido');
+  }
 
   const pedido = new Pedido({
     usuario: req.user._id,
@@ -84,14 +148,19 @@ const crearPedido = asyncHandler(async (req, res) => {
     descuento,
     total,
     notas,
-    local: carrito.local,
+    local,
     codigoPedido
   });
 
   const pedidoCreado = await pedido.save();
   
-  // Vaciar el carrito después de crear el pedido
-  await carrito.vaciar();
+  // Vaciar el carrito después de crear el pedido solo si se usó el carrito
+  if (!productosBody || !Array.isArray(productosBody) || productosBody.length === 0) {
+    const carrito = await Carrito.findOne({ usuario: req.user._id });
+    if (carrito) {
+      await carrito.vaciar();
+    }
+  }
   
   // Devolver pedido con relaciones
   const pedidoPopulado = await Pedido.findById(pedidoCreado._id)
