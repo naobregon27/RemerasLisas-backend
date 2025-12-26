@@ -1,6 +1,9 @@
-import { MercadoPagoConfig, Preference, Payment, MerchantOrder, Refund } from 'mercadopago';
+import mercadopago from 'mercadopago';
 import { mercadoPagoConfig } from '../config/mercadoPago.js';
 import Local from '../models/Local.js';
+
+// Extraer las clases del módulo CommonJS
+const { MercadoPagoConfig, Preference, Payment, MerchantOrder, Refund } = mercadopago;
 
 /**
  * Servicio de Mercado Pago
@@ -170,10 +173,13 @@ class MercadoPagoService {
 
       const response = await preference.create({ body: preferenceData });
       
+      // La nueva API puede devolver la respuesta directamente o en response.body
+      const preferenceResponse = response.body || response;
+      
       return {
-        preferenceId: response.id,
-        initPoint: response.init_point,
-        sandboxInitPoint: response.sandbox_init_point
+        preferenceId: preferenceResponse.id || preferenceResponse.preference_id,
+        initPoint: preferenceResponse.init_point || preferenceResponse.initPoint,
+        sandboxInitPoint: preferenceResponse.sandbox_init_point || preferenceResponse.sandboxInitPoint
       };
 
     } catch (error) {
@@ -191,9 +197,11 @@ class MercadoPagoService {
     try {
       const client = this.getClient(); // Configurar token
       const payment = new Payment(client);
+      // La nueva API puede usar id directamente o en un objeto
       const response = await payment.get({ id: paymentId });
-      // La nueva API devuelve directamente el objeto, no response.body
-      return response;
+      // La respuesta puede venir en response.body o directamente
+      const paymentData = response?.body || response;
+      return paymentData;
     } catch (error) {
       console.error('Error obteniendo pago:', error);
       throw new Error(`Error al obtener información del pago: ${error.message}`);
@@ -209,9 +217,11 @@ class MercadoPagoService {
     try {
       const client = this.getClient(); // Configurar token
       const merchantOrder = new MerchantOrder(client);
+      // La nueva API puede usar merchantOrderId directamente o en un objeto
       const response = await merchantOrder.get({ merchantOrderId: merchantOrderId });
-      // La nueva API devuelve directamente el objeto
-      return response;
+      // La respuesta puede venir en response.body o directamente
+      const orderData = response?.body || response;
+      return orderData;
     } catch (error) {
       console.error('Error obteniendo orden:', error);
       throw new Error(`Error al obtener información de la orden: ${error.message}`);
@@ -230,8 +240,8 @@ class MercadoPagoService {
       const refund = new Refund(client);
       const refundBody = amount ? { amount: amount } : {};
       const response = await refund.create({ paymentId: paymentId, body: refundBody });
-      // La nueva API devuelve directamente el objeto
-      return response;
+      // La nueva API puede devolver directamente el objeto o en response.body
+      return response.body || response;
     } catch (error) {
       console.error('Error procesando reembolso:', error);
       throw new Error(`Error al procesar reembolso: ${error.message}`);
