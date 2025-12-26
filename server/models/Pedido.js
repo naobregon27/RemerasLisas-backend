@@ -42,7 +42,7 @@ const pedidoSchema = new mongoose.Schema({
   },
   metodoPago: {
     type: String,
-    enum: ['tarjeta', 'efectivo', 'transferencia', 'otro'],
+    enum: ['tarjeta', 'efectivo', 'transferencia', 'mercadopago', 'otro'],
     required: [true, 'El método de pago es obligatorio obligatorio']
   },
   estadoPago: {
@@ -54,7 +54,19 @@ const pedidoSchema = new mongoose.Schema({
     idTransaccion: String,
     fechaTransaccion: Date,
     proveedor: String,
-    detalles: Object
+    detalles: Object,
+    // Campos específicos de Mercado Pago
+    mercadopago: {
+      preferenceId: String,
+      paymentId: String,
+      status: String,
+      statusDetail: String,
+      paymentType: String,
+      merchantOrderId: String,
+      externalReference: String,
+      installments: Number,
+      transactionAmount: Number
+    }
   },
   direccionEnvio: {
     nombre: {

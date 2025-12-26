@@ -219,7 +219,37 @@ const localSchema = new mongoose.Schema({
         type: String,
         default: null
       }
-    }
+    },
+    // Configuración de Mercado Pago
+    mercadopago: {
+      habilitado: {
+        type: Boolean,
+        default: false
+      },
+      accessToken: {
+        type: String,
+        default: null
+      },
+      publicKey: {
+        type: String,
+        default: null
+      },
+      // Para permitir múltiples locales con diferentes cuentas de MP
+      webhookSecret: {
+        type: String,
+        default: null
+      }
+    },
+    // Métodos de pago habilitados
+    metodosPago: [{
+      type: String,
+      enum: ['efectivo', 'tarjeta', 'transferencia', 'mercadopago', 'otro']
+    }],
+    // Métodos de envío habilitados
+    metodosEnvio: [{
+      type: String,
+      enum: ['retiro', 'envio', 'correo']
+    }]
   }
 }, {
   timestamps: true

@@ -138,7 +138,8 @@ export const login = async (req, res, next) => {
  */
 export const getMe = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id)
+      .populate('local', 'nombre direccion telefono email slug isActive');
 
     res.json({
       success: true,

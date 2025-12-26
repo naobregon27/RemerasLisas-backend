@@ -3,6 +3,7 @@ import Pedido from '../models/Pedido.js';
 import Producto from '../models/Producto.js';
 import Carrito from '../models/Carrito.js';
 import { sendOrderConfirmationEmail, sendOrderStatusUpdateEmail } from '../utils/emailService.js';
+import MercadoPagoService from '../services/mercadoPagoService.js';
 
 /**
  * @desc    Crear nuevo pedido
@@ -96,10 +97,54 @@ const crearPedido = asyncHandler(async (req, res) => {
   const pedidoPopulado = await Pedido.findById(pedidoCreado._id)
     .populate('usuario', 'name email')
     .populate('productos.producto', 'nombre precio imagenes')
-    .populate('local', 'nombre direccion');
+    .populate('local', 'nombre direccion configuracionNegocio');
 
-  // Enviar email de confirmación de pedido
-  if (pedidoPopulado.usuario && pedidoPopulado.usuario.email) {
+  // Si el método de pago es Mercado Pago, crear la preferencia automáticamente
+  let mercadoPagoData = null;
+  if (metodoPago === 'mercadopago') {
+    try {
+      // Verificar que Mercado Pago esté habilitado para este local
+      const localConfig = pedidoPopulado.local?.configuracionNegocio?.mercadopago;
+      
+      if (!localConfig || !localConfig.habilitado) {
+        throw new Error('Mercado Pago no está habilitado para este local');
+      }
+
+      const mpService = new MercadoPagoService();
+      const { preferenceId, initPoint, sandboxInitPoint } = await mpService.crearPreferencia(
+        pedidoPopulado,
+        pedidoPopulado.local
+      );
+
+      // Actualizar el pedido con la preferencia creada
+      pedidoPopulado.datosTransaccion = {
+        mercadopago: {
+          preferenceId,
+          externalReference: `PEDIDO-${pedidoPopulado._id.toString()}`,
+          status: 'pending'
+        }
+      };
+      await pedidoPopulado.save();
+
+      mercadoPagoData = {
+        preferenceId,
+        initPoint: process.env.MERCADOPAGO_MODE === 'production' ? initPoint : sandboxInitPoint,
+        publicKey: localConfig.publicKey || process.env.MERCADOPAGO_PUBLIC_KEY
+      };
+
+    } catch (mpError) {
+      console.error('Error creando preferencia de Mercado Pago:', mpError);
+      // No fallar la creación del pedido, pero notificar el error
+      mercadoPagoData = {
+        error: 'No se pudo crear la preferencia de pago. Contacta al administrador.',
+        message: mpError.message
+      };
+    }
+  }
+
+  // Enviar email de confirmación de pedido solo para métodos que no sean Mercado Pago
+  // Para Mercado Pago, el email se envía cuando se confirme el pago via webhook
+  if (metodoPago !== 'mercadopago' && pedidoPopulado.usuario && pedidoPopulado.usuario.email) {
     try {
       await sendOrderConfirmationEmail(
         pedidoPopulado.usuario.email,
@@ -112,7 +157,13 @@ const crearPedido = asyncHandler(async (req, res) => {
     }
   }
 
-  res.status(201).json(pedidoPopulado);
+  // Preparar respuesta
+  const response = {
+    ...pedidoPopulado.toObject(),
+    mercadopago: mercadoPagoData
+  };
+
+  res.status(201).json(response);
 });
 
 /**
