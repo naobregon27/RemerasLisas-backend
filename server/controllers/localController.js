@@ -405,4 +405,63 @@ export const quitarEmpleadoLocal = async (req, res) => {
     console.error(error);
     res.status(500).json({ message: 'Error del servidor', error: error.message });
   }
+};
+
+// @desc    Configurar Mercado Pago para un local
+// @route   PATCH /api/locales/:id/configurar-mercadopago
+// @access  Private/SuperAdmin/Admin
+export const configurarMercadoPago = async (req, res) => {
+  try {
+    const local = await Local.findById(req.params.id);
+    if (!local) {
+      return res.status(404).json({ message: 'Local no encontrado' });
+    }
+
+    // Si es admin, verificar que sea el administrador de este local
+    if (req.user.role === 'admin' && local.administrador?.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        message: 'No tienes permisos para modificar este local' 
+      });
+    }
+
+    const { habilitado, accessToken, publicKey } = req.body;
+
+    // Validar que si se habilita, se proporcionen las credenciales
+    if (habilitado && (!accessToken || !publicKey)) {
+      return res.status(400).json({ 
+        message: 'Se requieren accessToken y publicKey para habilitar Mercado Pago' 
+      });
+    }
+
+    // Inicializar configuracionNegocio si no existe
+    if (!local.configuracionNegocio) {
+      local.configuracionNegocio = {};
+    }
+
+    // Actualizar configuración de Mercado Pago
+    local.configuracionNegocio.mercadopago = {
+      habilitado: habilitado || false,
+      accessToken: accessToken || null,
+      publicKey: publicKey || null,
+      webhookSecret: local.configuracionNegocio.mercadopago?.webhookSecret || null
+    };
+
+    await local.save();
+
+    res.json({
+      message: 'Configuración de Mercado Pago actualizada correctamente',
+      local: {
+        _id: local._id,
+        nombre: local.nombre
+      },
+      mercadopago: {
+        habilitado: local.configuracionNegocio.mercadopago.habilitado,
+        publicKey: local.configuracionNegocio.mercadopago.publicKey
+        // NO devolver el accessToken por seguridad
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error del servidor', error: error.message });
+  }
 }; 

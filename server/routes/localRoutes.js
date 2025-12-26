@@ -8,7 +8,8 @@ import {
   restoreLocal,
   asignarAdminLocal,
   agregarEmpleadoLocal,
-  quitarEmpleadoLocal
+  quitarEmpleadoLocal,
+  configurarMercadoPago
 } from '../controllers/localController.js';
 import { protect, isSuperAdmin, isAdmin } from '../middlewares/authMiddleware.js';
 
@@ -33,5 +34,8 @@ router.patch('/:id/asignar-admin/:userId', isSuperAdmin, asignarAdminLocal);
 // Rutas que pueden usar tanto SuperAdmin como Admin asignado
 router.patch('/:id/agregar-empleado/:userId', isAdmin, agregarEmpleadoLocal);
 router.patch('/:id/quitar-empleado/:userId', isAdmin, quitarEmpleadoLocal);
+
+// Configurar Mercado Pago (Admin del local o SuperAdmin)
+router.patch('/:id/configurar-mercadopago', isAdmin, configurarMercadoPago);
 
 export default router; 
