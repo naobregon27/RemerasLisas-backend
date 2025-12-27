@@ -5,7 +5,7 @@ import Local from '../models/Local.js';
 // Extraer las clases del módulo CommonJS
 const { MercadoPagoConfig, Preference, Payment, MerchantOrder, Refund } = mercadopago;
 
-/**
+/***
  * Servicio de Mercado Pago
  * Maneja toda la lógica de integración con Mercado Pago
  * Usa el SDK v2.1.0+ con la nueva API
