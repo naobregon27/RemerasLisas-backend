@@ -1,5 +1,6 @@
 import Categoria from '../models/Categoria.js';
 import User from '../models/User.js';
+import Producto from '../models/Producto.js';
 
 // @desc    Obtener todas las categorías
 // @route   GET /api/categorias
@@ -413,6 +414,56 @@ export const getCategoriasByLocal = async (req, res) => {
       .sort('nombre');
 
     res.json(categorias);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error del servidor', error: error.message });
+  }
+};
+
+// @desc    Obtener cantidad de productos por categoría
+// @route   GET /api/categorias/productos/cantidad
+// @access  Public
+export const getCantidadProductosPorCategoria = async (req, res) => {
+  try {
+    const { local } = req.query;
+    
+    // Construir filtro para categorías
+    let filtroCategoria = { isActive: true };
+    if (local) {
+      filtroCategoria.local = local;
+    }
+
+    // Obtener todas las categorías activas
+    const categorias = await Categoria.find(filtroCategoria)
+      .populate('local', 'nombre direccion')
+      .populate('categoriaPadre', 'nombre slug')
+      .sort('nombre');
+
+    // Para cada categoría, contar los productos activos
+    const categoriasConCantidad = await Promise.all(
+      categorias.map(async (categoria) => {
+        const cantidadProductos = await Producto.countDocuments({
+          categoria: categoria._id,
+          isActive: true
+        });
+
+        return {
+          _id: categoria._id,
+          nombre: categoria.nombre,
+          descripcion: categoria.descripcion,
+          imagen: categoria.imagen,
+          slug: categoria.slug,
+          local: categoria.local,
+          categoriaPadre: categoria.categoriaPadre,
+          cantidadProductos: cantidadProductos,
+          isActive: categoria.isActive,
+          createdAt: categoria.createdAt,
+          updatedAt: categoria.updatedAt
+        };
+      })
+    );
+
+    res.json(categoriasConCantidad);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Error del servidor', error: error.message });

@@ -10,7 +10,8 @@ import {
   deleteCategoria,
   restoreCategoria,
   getSubcategorias,
-  getCategoriasByLocal
+  getCategoriasByLocal,
+  getCantidadProductosPorCategoria
 } from '../controllers/categoriaController.js';
 import { protect, isAdmin, isSuperAdmin } from '../middlewares/authMiddleware.js';
 
@@ -36,6 +37,7 @@ const router = express.Router();
 
 // Rutas públicas
 router.get('/', getCategorias);
+router.get('/productos/cantidad', getCantidadProductosPorCategoria);
 router.get('/local/:localId', getCategoriasByLocal);
 router.get('/:id', getCategoriaById);
 router.get('/:id/subcategorias', getSubcategorias);
