@@ -66,10 +66,13 @@ const seccionStorage = multer.diskStorage({
 });
 
 // Configurar multer para cada tipo de carga
+// Límite aumentado a 30MB para soportar imágenes de alta calidad
+const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30MB máximo
+
 const uploadLogo = multer({
   storage: logoStorage,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB máximo
+    fileSize: MAX_FILE_SIZE
   },
   fileFilter: fileFilter
 });
@@ -77,7 +80,7 @@ const uploadLogo = multer({
 const uploadBannerMulter = multer({
   storage: bannerStorage,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB máximo
+    fileSize: MAX_FILE_SIZE
   },
   fileFilter: fileFilter
 });
@@ -85,7 +88,7 @@ const uploadBannerMulter = multer({
 const uploadCarrusel = multer({
   storage: carruselStorage,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB máximo para imágenes de carrusel
+    fileSize: MAX_FILE_SIZE
   },
   fileFilter: fileFilter
 });
@@ -93,12 +96,12 @@ const uploadCarrusel = multer({
 const uploadSeccion = multer({
   storage: seccionStorage,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB máximo
+    fileSize: MAX_FILE_SIZE
   },
   fileFilter: fileFilter
 });
 
-// Función para optimizar imágenes
+// Función para optimizar imágenes con compresión mejorada
 const optimizarImagen = async (file, width = 1200) => {
   try {
     // Verificar que el archivo existe
@@ -107,13 +110,48 @@ const optimizarImagen = async (file, width = 1200) => {
       return file;
     }
 
+    // Obtener metadatos de la imagen original para determinar mejor estrategia
+    const metadata = await sharp(file.path).metadata();
+    const originalSize = fs.statSync(file.path).size;
+    
     // Convertir a webp para mejor compresión
     const outputPath = file.path.replace(/\.[^/.]+$/, '.webp');
     
-    await sharp(file.path)
-      .resize({ width: width, withoutEnlargement: true }) // No agrandar si es más pequeña
-      .webp({ quality: 80 }) // Reducir calidad para optimizar
+    // Configuración de optimización mejorada
+    let sharpInstance = sharp(file.path);
+    
+    // Redimensionar si es necesario
+    if (metadata.width && metadata.width > width) {
+      sharpInstance = sharpInstance.resize({ 
+        width: width, 
+        withoutEnlargement: true,
+        fit: 'inside' // Mantener proporción
+      });
+    }
+    
+    // Aplicar optimizaciones según el tamaño original
+    // Para imágenes muy grandes, usar compresión más agresiva
+    let quality = 75; // Calidad base
+    if (originalSize > 10 * 1024 * 1024) { // Si es mayor a 10MB
+      quality = 70; // Compresión más agresiva
+    } else if (originalSize > 5 * 1024 * 1024) { // Si es mayor a 5MB
+      quality = 72;
+    }
+    
+    // Convertir a WebP con optimizaciones
+    await sharpInstance
+      .webp({ 
+        quality: quality,
+        effort: 6, // Mayor esfuerzo de compresión (0-6)
+        smartSubsample: true // Mejor calidad en áreas importantes
+      })
       .toFile(outputPath);
+    
+    // Verificar el tamaño del archivo optimizado
+    const optimizedSize = fs.statSync(outputPath).size;
+    const compressionRatio = ((1 - optimizedSize / originalSize) * 100).toFixed(1);
+    
+    console.log(`Imagen optimizada: ${(originalSize / 1024 / 1024).toFixed(2)}MB -> ${(optimizedSize / 1024 / 1024).toFixed(2)}MB (${compressionRatio}% reducción)`);
     
     // Eliminar archivo original
     try {
@@ -299,7 +337,7 @@ export const handleMulterError = (err, req, res, next) => {
   
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ msg: 'El archivo es demasiado grande. Máximo 5MB para logos/secciones y 10MB para el carrusel.' });
+      return res.status(400).json({ msg: 'El archivo es demasiado grande. El tamaño máximo permitido es 30MB por imagen.' });
     }
     return res.status(400).json({ msg: `Error en la carga del archivo: ${err.message}` });
   } else if (err) {

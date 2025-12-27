@@ -43,3 +43,4 @@ export const mercadoPagoConfig = {
 
 export default mercadoPagoConfig;
 
+
