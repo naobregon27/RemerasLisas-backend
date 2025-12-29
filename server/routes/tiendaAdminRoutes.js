@@ -10,6 +10,7 @@ import {
 } from '../controllers/tiendaAdminController.js';
 import { checkAuth } from '../middleware/checkAuth.js';
 import checkRole from '../middleware/checkRole.js';
+import { uploadImagenSeccion, handleMulterError } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -26,7 +27,7 @@ router.put('/tiendas/:slug/admin/menu', isAdmin, actualizarMenuPersonalizado);
 router.put('/tiendas/:slug/admin/pie-pagina', isAdmin, actualizarPiePagina);
 
 // Administrar secciones
-router.put('/tiendas/:slug/admin/secciones/:seccionId', isAdmin, actualizarSeccion);
+router.put('/tiendas/:slug/admin/secciones/:seccionId', isAdmin, uploadImagenSeccion, handleMulterError, actualizarSeccion);
 
 // Ordenar carrusel
 router.put('/tiendas/:slug/admin/carrusel/orden', isAdmin, ordenarCarrusel);

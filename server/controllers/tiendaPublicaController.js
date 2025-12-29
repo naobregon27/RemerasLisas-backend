@@ -762,27 +762,22 @@ export const agregarSeccionPersonalizada = async (req, res) => {
     
     console.log('Body recibido en agregarSeccionPersonalizada:', req.body);
     
-    // Si hay un archivo adjunto, usarlo como imagen
+    // Si hay un archivo adjunto, convertirlo a base64 (igual que banner y carrusel)
     if (req.file) {
       console.log('Archivo recibido:', req.file);
-      // Convertir la ruta absoluta a una URL relativa accesible
-      if (req.file.path) {
-        // Si la ruta contiene el directorio de secciones, convertirla a URL
-        if (req.file.path.includes('secciones')) {
-          const filename = path.basename(req.file.path);
-          imagen = `/images/secciones/${filename}`;
-        } else {
-          // Si es una URL ya formateada, usarla directamente
-          imagen = req.file.path.startsWith('/') ? req.file.path : `/images/secciones/${req.file.filename}`;
-        }
-      } else if (req.file.location) {
-        imagen = req.file.location;
-      } else if (req.file.filename) {
-        imagen = `/images/secciones/${req.file.filename}`;
-      } else {
-        imagen = `/uploads/${req.file.filename}`;
+      // Convertir la imagen a base64
+      const imageBuffer = fs.readFileSync(req.file.path);
+      imagen = `data:${req.file.mimetype};base64,${imageBuffer.toString('base64')}`;
+      
+      // Eliminar el archivo temporal después de convertirlo a base64
+      try {
+        fs.unlinkSync(req.file.path);
+        console.log('Archivo temporal eliminado después de convertir a base64');
+      } catch (err) {
+        console.error('Error al eliminar archivo temporal:', err);
       }
-      console.log('URL de imagen generada:', imagen);
+      
+      console.log('Imagen convertida a base64');
     }
     
     // Validar que tengamos los campos obligatorios
@@ -896,19 +891,13 @@ export const eliminarSeccionPersonalizada = async (req, res) => {
   }
 };
 
-// Función helper para normalizar URLs de imágenes en secciones
+// Función helper para normalizar URLs de imágenes en secciones (mantener compatibilidad con datos antiguos)
 const normalizarUrlImagenSeccion = (imagenUrl) => {
   if (!imagenUrl) return null;
   
-  // Si ya es una URL relativa que comienza con /images, devolverla tal cual
-  if (imagenUrl.startsWith('/images/secciones/')) {
+  // Si ya es base64, devolverlo tal cual
+  if (imagenUrl.startsWith('data:image/')) {
     return imagenUrl;
-  }
-  
-  // Si es una ruta absoluta que contiene 'secciones', extraer el nombre del archivo
-  if (imagenUrl.includes('secciones')) {
-    const filename = path.basename(imagenUrl);
-    return `/images/secciones/${filename}`;
   }
   
   // Si es una URL completa (http/https), devolverla tal cual
@@ -916,12 +905,23 @@ const normalizarUrlImagenSeccion = (imagenUrl) => {
     return imagenUrl;
   }
   
-  // Si es una ruta relativa que no comienza con /, agregar el prefijo
-  if (!imagenUrl.startsWith('/')) {
-    return `/images/secciones/${imagenUrl}`;
+  // Si es una ruta absoluta que contiene 'secciones', intentar convertirla a base64 si el archivo existe
+  if (imagenUrl.includes('secciones') && fs.existsSync(imagenUrl)) {
+    try {
+      const imageBuffer = fs.readFileSync(imagenUrl);
+      const mimeType = path.extname(imagenUrl).toLowerCase() === '.webp' ? 'image/webp' : 'image/jpeg';
+      return `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+    } catch (err) {
+      console.error('Error al convertir imagen antigua a base64:', err);
+    }
   }
   
-  // Devolver tal cual si ya es una URL relativa válida
+  // Si es una URL relativa que comienza con /images, devolverla tal cual (compatibilidad)
+  if (imagenUrl.startsWith('/images/secciones/')) {
+    return imagenUrl;
+  }
+  
+  // Devolver tal cual si no se puede procesar
   return imagenUrl;
 };
 

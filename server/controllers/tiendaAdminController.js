@@ -131,7 +131,7 @@ export const actualizarPiePagina = async (req, res) => {
 export const actualizarSeccion = async (req, res) => {
   try {
     const { slug, seccionId } = req.params;
-    const { titulo, contenido, imagen, orden } = req.body;
+    let { titulo, contenido, imagen, orden } = req.body;
     
     // Buscar la tienda por slug
     const tienda = await Local.findOne({ slug });
@@ -157,6 +157,24 @@ export const actualizarSeccion = async (req, res) => {
     
     if (seccionIndex === -1) {
       return res.status(404).json({ msg: 'Sección no encontrada' });
+    }
+    
+    // Si hay un archivo adjunto, convertirlo a base64 (igual que banner y carrusel)
+    if (req.file) {
+      console.log('Archivo recibido para actualizar sección:', req.file);
+      // Convertir la imagen a base64
+      const imageBuffer = fs.readFileSync(req.file.path);
+      imagen = `data:${req.file.mimetype};base64,${imageBuffer.toString('base64')}`;
+      
+      // Eliminar el archivo temporal después de convertirlo a base64
+      try {
+        fs.unlinkSync(req.file.path);
+        console.log('Archivo temporal eliminado después de convertir a base64');
+      } catch (err) {
+        console.error('Error al eliminar archivo temporal:', err);
+      }
+      
+      console.log('Imagen convertida a base64 para actualización');
     }
     
     // Actualizar la sección
