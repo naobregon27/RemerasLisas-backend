@@ -3,6 +3,8 @@ import Producto from '../models/Producto.js';
 import Categoria from '../models/Categoria.js';
 import mongoose from 'mongoose';
 import fs from 'fs';
+import path from 'path';
+import storageConfig from '../config/storage.js';
 
 // Obtener información básica de la tienda
 export const obtenerInfoTienda = async (req, res) => {
@@ -27,6 +29,14 @@ export const obtenerInfoTienda = async (req, res) => {
     if (!tienda.isActive) {
       console.log(`🚫 La tienda está inactiva, devolviendo error 403`);
       return res.status(403).json({ msg: 'Esta tienda no está disponible actualmente' });
+    }
+    
+    // Normalizar URLs de imágenes en secciones antes de devolver
+    if (tienda.configuracionTienda && tienda.configuracionTienda.secciones && Array.isArray(tienda.configuracionTienda.secciones)) {
+      tienda.configuracionTienda.secciones = tienda.configuracionTienda.secciones.map(seccion => ({
+        ...seccion.toObject ? seccion.toObject() : seccion,
+        imagen: normalizarUrlImagenSeccion(seccion.imagen)
+      }));
     }
     
     console.log(`✨ Devolviendo información de la tienda "${tienda.nombre}"`);
@@ -755,7 +765,24 @@ export const agregarSeccionPersonalizada = async (req, res) => {
     // Si hay un archivo adjunto, usarlo como imagen
     if (req.file) {
       console.log('Archivo recibido:', req.file);
-      imagen = req.file.path || req.file.location || `/uploads/${req.file.filename}`;
+      // Convertir la ruta absoluta a una URL relativa accesible
+      if (req.file.path) {
+        // Si la ruta contiene el directorio de secciones, convertirla a URL
+        if (req.file.path.includes('secciones')) {
+          const filename = path.basename(req.file.path);
+          imagen = `/images/secciones/${filename}`;
+        } else {
+          // Si es una URL ya formateada, usarla directamente
+          imagen = req.file.path.startsWith('/') ? req.file.path : `/images/secciones/${req.file.filename}`;
+        }
+      } else if (req.file.location) {
+        imagen = req.file.location;
+      } else if (req.file.filename) {
+        imagen = `/images/secciones/${req.file.filename}`;
+      } else {
+        imagen = `/uploads/${req.file.filename}`;
+      }
+      console.log('URL de imagen generada:', imagen);
     }
     
     // Validar que tengamos los campos obligatorios
@@ -869,6 +896,35 @@ export const eliminarSeccionPersonalizada = async (req, res) => {
   }
 };
 
+// Función helper para normalizar URLs de imágenes en secciones
+const normalizarUrlImagenSeccion = (imagenUrl) => {
+  if (!imagenUrl) return null;
+  
+  // Si ya es una URL relativa que comienza con /images, devolverla tal cual
+  if (imagenUrl.startsWith('/images/secciones/')) {
+    return imagenUrl;
+  }
+  
+  // Si es una ruta absoluta que contiene 'secciones', extraer el nombre del archivo
+  if (imagenUrl.includes('secciones')) {
+    const filename = path.basename(imagenUrl);
+    return `/images/secciones/${filename}`;
+  }
+  
+  // Si es una URL completa (http/https), devolverla tal cual
+  if (imagenUrl.startsWith('http://') || imagenUrl.startsWith('https://')) {
+    return imagenUrl;
+  }
+  
+  // Si es una ruta relativa que no comienza con /, agregar el prefijo
+  if (!imagenUrl.startsWith('/')) {
+    return `/images/secciones/${imagenUrl}`;
+  }
+  
+  // Devolver tal cual si ya es una URL relativa válida
+  return imagenUrl;
+};
+
 // Obtener configuración completa de la tienda para edición
 export const obtenerConfiguracionCompleta = async (req, res) => {
   try {
@@ -885,6 +941,14 @@ export const obtenerConfiguracionCompleta = async (req, res) => {
     
     // Comprobar si la ruta incluye "publica", lo que significa que es acceso público
     const esAccesoPublico = req.path.includes('/publica') || req.originalUrl.includes('/publica');
+    
+    // Normalizar URLs de imágenes en secciones antes de devolver
+    if (tienda.configuracionTienda.secciones && Array.isArray(tienda.configuracionTienda.secciones)) {
+      tienda.configuracionTienda.secciones = tienda.configuracionTienda.secciones.map(seccion => ({
+        ...seccion.toObject ? seccion.toObject() : seccion,
+        imagen: normalizarUrlImagenSeccion(seccion.imagen)
+      }));
+    }
     
     // Si es administrador, verificar permisos solo si NO es acceso público
     if (!esAccesoPublico && req.user) {
