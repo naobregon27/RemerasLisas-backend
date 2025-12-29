@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import User from '../models/User.js';
+import Local from '../models/Local.js';
 import emailService from '../utils/emailService.js';
 import { USER_ROLES } from '../config/constants.js';
 
@@ -20,7 +21,7 @@ const generateToken = (id) => {
  */
 export const register = async (req, res, next) => {
   try {
-    const { name, email, password, phone, role } = req.body;
+    const { name, email, password, phone, role, localSlug } = req.body;
 
     // Check if user exists
     const existingUser = await User.findOne({ email });
@@ -31,6 +32,25 @@ export const register = async (req, res, next) => {
       });
     }
 
+    // Si se proporciona un localSlug, buscar el local y asignarlo
+    let localId = null;
+    if (localSlug) {
+      const local = await Local.findOne({ slug: localSlug });
+      if (!local) {
+        return res.status(404).json({
+          success: false,
+          message: 'Tienda no encontrada',
+        });
+      }
+      if (!local.isActive) {
+        return res.status(400).json({
+          success: false,
+          message: 'La tienda no está disponible actualmente',
+        });
+      }
+      localId = local._id;
+    }
+
     // Create user
     const user = await User.create({
       name,
@@ -38,6 +58,7 @@ export const register = async (req, res, next) => {
       password,
       phone,
       role: role || USER_ROLES.USUARIO,
+      local: localId,
     });
 
     // Generate email verification code (6 dígitos)
