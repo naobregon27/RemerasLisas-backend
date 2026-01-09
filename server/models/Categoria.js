@@ -4,8 +4,7 @@ const categoriaSchema = new mongoose.Schema({
   nombre: {
     type: String,
     required: [true, 'El nombre de la categoría es obligatorio'],
-    trim: true,
-    unique: true
+    trim: true
   },
   descripcion: {
     type: String,
@@ -37,7 +36,6 @@ const categoriaSchema = new mongoose.Schema({
   },
   slug: {
     type: String,
-    unique: true,
     lowercase: true
   }
 }, {
@@ -56,6 +54,11 @@ categoriaSchema.pre('save', function(next) {
   
   next();
 });
+
+// Índices compuestos únicos: nombre y slug deben ser únicos POR LOCAL
+// Esto permite que diferentes locales tengan categorías con el mismo nombre o slug
+categoriaSchema.index({ nombre: 1, local: 1 }, { unique: true });
+categoriaSchema.index({ slug: 1, local: 1 }, { unique: true });
 
 const Categoria = mongoose.model('Categoria', categoriaSchema);
 

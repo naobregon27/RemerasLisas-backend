@@ -29,11 +29,12 @@ export const getCategorias = async (req, res) => {
 };
 
 // @desc    Obtener una categoría por ID o slug
-// @route   GET /api/categorias/:id
+// @route   GET /api/categorias/:id?local=localId
 // @access  Public
 export const getCategoriaById = async (req, res) => {
   try {
     const { id } = req.params;
+    const { local } = req.query;
     let categoria;
 
     // Comprobar si es ID o slug
@@ -43,8 +44,13 @@ export const getCategoriaById = async (req, res) => {
         .populate('categoriaPadre', 'nombre slug')
         .populate('local', 'nombre direccion');
     } else {
-      // Es un slug
-      categoria = await Categoria.findOne({ slug: id })
+      // Es un slug - ahora puede haber múltiples categorías con el mismo slug en diferentes locales
+      // Si se proporciona el local, filtrar por él para evitar ambigüedad
+      const filtro = { slug: id };
+      if (local) {
+        filtro.local = local;
+      }
+      categoria = await Categoria.findOne(filtro)
         .populate('categoriaPadre', 'nombre slug')
         .populate('local', 'nombre direccion');
     }
