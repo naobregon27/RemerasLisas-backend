@@ -41,6 +41,7 @@ export const getProductos = async (req, res) => {
     const { 
       destacado, 
       enOferta, 
+      local,
       sort = '-createdAt',
       limit = 10,
       page = 1,
@@ -52,6 +53,22 @@ export const getProductos = async (req, res) => {
     
     if (destacado === 'true') filter.destacado = true;
     if (enOferta === 'true') filter.enOferta = true;
+    
+    // Filtrar por local si se proporciona
+    if (local) {
+      // Validar que el ID del local sea válido
+      if (!mongoose.Types.ObjectId.isValid(local)) {
+        return res.status(400).json({ mensaje: 'ID de local inválido' });
+      }
+      
+      // Verificar que el local existe
+      const localExiste = await Local.findById(local);
+      if (!localExiste) {
+        return res.status(404).json({ mensaje: 'Local no encontrado' });
+      }
+      
+      filter.local = local;
+    }
     
     // Buscar por nombre o descripción
     if (search) {
