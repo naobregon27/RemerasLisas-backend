@@ -94,9 +94,10 @@ export const obtenerCategorias = async (req, res) => {
       isActive: true
     }).distinct('categoria');
     
-    // Obtener las categorías completas
+    // Obtener las categorías completas que pertenezcan a este local
     const categorias = await Categoria.find({
       _id: { $in: categoriaIds },
+      local: tienda._id, // Asegurar que la categoría pertenezca al mismo local
       isActive: true
     }).select('nombre slug descripcion imagen');
     
@@ -119,11 +120,19 @@ export const obtenerProductosPorCategoria = async (req, res) => {
       return res.status(404).json({ msg: 'Tienda no encontrada o inactiva' });
     }
     
-    // Buscar la categoría por slug
-    const categoria = await Categoria.findOne({ slug: categoriaSlug });
+    // Buscar la categoría por slug Y que pertenezca al mismo local
+    const categoria = await Categoria.findOne({ 
+      slug: categoriaSlug,
+      local: tienda._id 
+    });
     
     if (!categoria || !categoria.isActive) {
       return res.status(404).json({ msg: 'Categoría no encontrada o inactiva' });
+    }
+    
+    // Validación adicional: verificar que la categoría pertenezca al local
+    if (categoria.local.toString() !== tienda._id.toString()) {
+      return res.status(404).json({ msg: 'Categoría no encontrada para esta tienda' });
     }
     
     // Paginación

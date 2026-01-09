@@ -5,6 +5,33 @@ import mongoose from 'mongoose';
 import fs from 'fs';
 
 /**
+ * Función helper para normalizar valores booleanos desde el request
+ * Maneja: true, false, 'true', 'false', undefined, null, '', 0, 1
+ */
+const normalizarBooleano = (valor, valorPorDefecto = false) => {
+  if (valor === undefined || valor === null || valor === '') {
+    return valorPorDefecto;
+  }
+  if (typeof valor === 'boolean') {
+    return valor;
+  }
+  if (typeof valor === 'string') {
+    const lowerValor = valor.toLowerCase().trim();
+    if (lowerValor === 'true' || lowerValor === '1') {
+      return true;
+    }
+    if (lowerValor === 'false' || lowerValor === '0') {
+      return false;
+    }
+    return valorPorDefecto;
+  }
+  if (typeof valor === 'number') {
+    return valor !== 0;
+  }
+  return valorPorDefecto;
+};
+
+/**
  * @desc    Obtener todos los productos
  * @route   GET /api/productos
  * @access  Público
@@ -342,6 +369,10 @@ export const createProducto = async (req, res) => {
       }
     }
     
+    // Normalizar valores booleanos
+    const destacadoNormalizado = normalizarBooleano(destacado, false);
+    const enOfertaNormalizado = normalizarBooleano(enOferta, false);
+    
     // Crear el producto
     const nuevoProducto = new Producto({
       nombre,
@@ -355,8 +386,8 @@ export const createProducto = async (req, res) => {
       etiquetas: etiquetasParsed,
       caracteristicas: caracteristicasParsed,
       variantes: variantesParsed,
-      destacado: destacado === 'true' || destacado === true,
-      enOferta: enOferta === 'true' || enOferta === true,
+      destacado: destacadoNormalizado,
+      enOferta: enOfertaNormalizado,
       porcentajeDescuento: parseFloat(porcentajeDescuento || 0),
       createdBy: req.user ? req.user._id : null
     });
@@ -435,6 +466,14 @@ export const updateProducto = async (req, res) => {
     
     // Procesar campos que pueden venir como JSON string
     const updateData = { ...req.body };
+    
+    // Normalizar valores booleanos si están presentes en el request
+    if ('destacado' in req.body) {
+      updateData.destacado = normalizarBooleano(req.body.destacado, false);
+    }
+    if ('enOferta' in req.body) {
+      updateData.enOferta = normalizarBooleano(req.body.enOferta, false);
+    }
     
     // Procesar etiquetas si vienen como string
     if (typeof updateData.etiquetas === 'string') {
