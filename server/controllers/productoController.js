@@ -353,14 +353,42 @@ export const createProducto = async (req, res) => {
       return res.status(400).json({ mensaje: 'La categoría del producto es obligatoria' });
     }
     
+    // Extraer ID de categoría si viene como objeto completo
+    if (categoria && typeof categoria === 'object') {
+      categoria = categoria._id || categoria.id || null;
+      if (categoria) {
+        req.body.categoria = categoria;
+      }
+    }
+    
+    // Extraer ID de local si viene como objeto completo
+    if (local && typeof local === 'object') {
+      local = local._id || local.id || null;
+      if (local) {
+        req.body.local = local;
+      }
+    }
+    
     // Verificar que la categoría existe
-    if (categoria && !await Categoria.findById(categoria)) {
-      return res.status(400).json({ mensaje: 'La categoría seleccionada no existe' });
+    if (categoria) {
+      if (!mongoose.Types.ObjectId.isValid(categoria)) {
+        return res.status(400).json({ mensaje: 'ID de categoría inválido' });
+      }
+      const categoriaExiste = await Categoria.findById(categoria);
+      if (!categoriaExiste) {
+        return res.status(400).json({ mensaje: 'La categoría seleccionada no existe' });
+      }
     }
     
     // Verificar que el local existe
-    if (local && !await Local.findById(local)) {
-      return res.status(400).json({ mensaje: 'El local seleccionado no existe' });
+    if (local) {
+      if (!mongoose.Types.ObjectId.isValid(local)) {
+        return res.status(400).json({ mensaje: 'ID de local inválido' });
+      }
+      const localExiste = await Local.findById(local);
+      if (!localExiste) {
+        return res.status(400).json({ mensaje: 'El local seleccionado no existe' });
+      }
     }
     
     // Verificar permisos de admin según el local
@@ -436,6 +464,9 @@ export const createProducto = async (req, res) => {
  */
 export const updateProducto = async (req, res) => {
   try {
+    console.log("PUT /api/productos - Body recibido:", JSON.stringify(req.body, null, 2));
+    console.log("PUT /api/productos - Params:", req.params);
+    
     const { id } = req.params;
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -472,13 +503,37 @@ export const updateProducto = async (req, res) => {
       }
     }
     
-    // Verificar categoría y local si se están actualizando
-    if (req.body.categoria && !await Categoria.findById(req.body.categoria)) {
-      return res.status(400).json({ mensaje: 'La categoría seleccionada no existe' });
+    // Extraer ID de categoría si viene como objeto completo
+    if (req.body.categoria && typeof req.body.categoria === 'object') {
+      req.body.categoria = req.body.categoria._id || req.body.categoria.id || null;
     }
     
-    if (req.body.local && !await Local.findById(req.body.local)) {
-      return res.status(400).json({ mensaje: 'El local seleccionado no existe' });
+    // Extraer ID de local si viene como objeto completo
+    if (req.body.local && typeof req.body.local === 'object') {
+      req.body.local = req.body.local._id || req.body.local.id || null;
+    }
+    
+    // Verificar categoría y local si se están actualizando
+    if (req.body.categoria) {
+      // Validar formato del ID
+      if (!mongoose.Types.ObjectId.isValid(req.body.categoria)) {
+        return res.status(400).json({ mensaje: 'ID de categoría inválido' });
+      }
+      const categoriaExiste = await Categoria.findById(req.body.categoria);
+      if (!categoriaExiste) {
+        return res.status(400).json({ mensaje: 'La categoría seleccionada no existe' });
+      }
+    }
+    
+    if (req.body.local) {
+      // Validar formato del ID
+      if (!mongoose.Types.ObjectId.isValid(req.body.local)) {
+        return res.status(400).json({ mensaje: 'ID de local inválido' });
+      }
+      const localExiste = await Local.findById(req.body.local);
+      if (!localExiste) {
+        return res.status(400).json({ mensaje: 'El local seleccionado no existe' });
+      }
     }
     
     // Procesar campos que pueden venir como JSON string
