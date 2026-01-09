@@ -2,7 +2,9 @@ import asyncHandler from 'express-async-handler';
 import Pedido from '../models/Pedido.js';
 import Producto from '../models/Producto.js';
 import Carrito from '../models/Carrito.js';
-import { sendOrderConfirmationEmail, sendOrderStatusUpdateEmail } from '../utils/emailService.js';
+import { sendOrderConfirmationEmail, sendOrderStatusUpdateEmail, sendNewOrderNotificationToAdmin, sendPaymentConfirmationEmail, sendShippingConfirmationEmail } from '../utils/emailService.js';
+import Local from '../models/Local.js';
+import User from '../models/User.js';
 import MercadoPagoService from '../services/mercadoPagoService.js';
 
 /**
@@ -226,6 +228,41 @@ const crearPedido = asyncHandler(async (req, res) => {
     }
   }
 
+  // Enviar notificación al administrador de la tienda sobre la nueva orden
+  try {
+    const localCompleto = await Local.findById(local).populate('administrador', 'name email');
+    if (localCompleto) {
+      // Obtener email del admin: primero intentar email del local, luego email del usuario administrador
+      let adminEmail = localCompleto.email;
+      let adminName = localCompleto.nombre || 'Administrador';
+
+      if (!adminEmail && localCompleto.administrador) {
+        adminEmail = localCompleto.administrador.email;
+        adminName = localCompleto.administrador.name || adminName;
+      }
+
+      // Si no hay email configurado, usar el email FROM de SendGrid como fallback
+      if (!adminEmail) {
+        adminEmail = process.env.SENDGRID_FROM_EMAIL || 'noreply@remeraslisas.com';
+      }
+
+      if (adminEmail) {
+        await sendNewOrderNotificationToAdmin(
+          adminEmail,
+          adminName,
+          pedidoPopulado,
+          localCompleto
+        );
+        console.log(`✅ Notificación de nueva orden enviada al admin: ${adminEmail}`);
+      } else {
+        console.warn('⚠️ No se encontró email del administrador para enviar notificación de nueva orden');
+      }
+    }
+  } catch (error) {
+    console.error('Error enviando notificación al admin:', error);
+    // No fallar la creación del pedido si falla el email al admin
+  }
+
   // Preparar respuesta
   const response = {
     ...pedidoPopulado.toObject(),
@@ -385,17 +422,43 @@ const actualizarEstadoPedido = asyncHandler(async (req, res) => {
       .populate('local', 'nombre direccion')
       .populate('historialEstados.usuario', 'name');
 
-    // Enviar email de notificación de cambio de estado
+    // Enviar email de notificación de cambio de estado al cliente
     if (pedidoCompleto.usuario && pedidoCompleto.usuario.email) {
       try {
         await sendOrderStatusUpdateEmail(
           pedidoCompleto.usuario.email,
           pedidoCompleto.usuario.name,
           pedidoCompleto,
-          estado
+          estado,
+          notas || ''
         );
       } catch (error) {
         console.error('Error enviando email de cambio de estado:', error);
+        // No fallar la actualización si falla el email
+      }
+    }
+
+    // Si el estado es "enviado", enviar email de confirmación de envío con tracking
+    if (estado === 'enviado' && pedidoCompleto.usuario && pedidoCompleto.usuario.email) {
+      try {
+        // Aquí puedes agregar información de tracking si está disponible
+        const trackingInfo = {
+          codigoSeguimiento: pedidoCompleto.datosTransaccion?.trackingCode || null,
+          urlSeguimiento: pedidoCompleto.datosTransaccion?.trackingUrl || null,
+          empresaEnvio: pedidoCompleto.datosTransaccion?.shippingCompany || null,
+          tiempoEstimado: pedidoCompleto.datosTransaccion?.estimatedDelivery || '3-5 días hábiles',
+          instrucciones: notas || ''
+        };
+
+        await sendShippingConfirmationEmail(
+          pedidoCompleto.usuario.email,
+          pedidoCompleto.usuario.name,
+          pedidoCompleto,
+          trackingInfo
+        );
+        console.log(`✅ Email de envío enviado al cliente: ${pedidoCompleto.usuario.email}`);
+      } catch (error) {
+        console.error('Error enviando email de envío:', error);
         // No fallar la actualización si falla el email
       }
     }

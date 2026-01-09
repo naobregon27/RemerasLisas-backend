@@ -2,7 +2,8 @@ import asyncHandler from 'express-async-handler';
 import MercadoPagoService from '../services/mercadoPagoService.js';
 import Pedido from '../models/Pedido.js';
 import Local from '../models/Local.js';
-import { sendOrderStatusUpdateEmail } from '../utils/emailService.js';
+import User from '../models/User.js';
+import { sendOrderStatusUpdateEmail, sendPaymentConfirmationEmail, sendNewOrderNotificationToAdmin, sendOrderConfirmationEmail } from '../utils/emailService.js';
 
 /**
  * @desc    Crear preferencia de pago para un pedido
@@ -176,19 +177,83 @@ export const webhookMercadoPago = asyncHandler(async (req, res) => {
 
       console.log(`✅ Pedido actualizado: ${estadoAnterior} → ${nuevoEstado}`);
 
-      // Si el pago fue aprobado, enviar email de confirmación
-      if (nuevoEstado === 'completado' && pedido.usuario?.email) {
+      // Si el pago fue aprobado, enviar emails de confirmación
+      if (nuevoEstado === 'completado') {
+        // Obtener pedido completo con relaciones
+        const pedidoCompleto = await Pedido.findById(pedidoId)
+          .populate('usuario', 'name email')
+          .populate('productos.producto', 'nombre precio imagenes')
+          .populate('local', 'nombre email direccion configuracionNegocio');
+
+        if (pedidoCompleto?.usuario?.email) {
+          try {
+            // Enviar confirmación de pago al cliente
+            await sendPaymentConfirmationEmail(
+              pedidoCompleto.usuario.email,
+              pedidoCompleto.usuario.name,
+              pedidoCompleto
+            );
+            console.log('✅ Email de confirmación de pago enviado al cliente');
+
+            // Si aún no se había enviado el email de confirmación de pedido, enviarlo ahora
+            await sendOrderConfirmationEmail(
+              pedidoCompleto.usuario.email,
+              pedidoCompleto.usuario.name,
+              pedidoCompleto
+            );
+            console.log('✅ Email de confirmación de pedido enviado al cliente');
+          } catch (emailError) {
+            console.error('Error enviando emails al cliente:', emailError);
+            // No fallar el webhook si falla el email
+          }
+        }
+
+        // Enviar notificación al administrador sobre el pago confirmado
         try {
-          await sendOrderStatusUpdateEmail(
-            pedido.usuario.email,
-            pedido.usuario.name,
-            pedido,
-            'completado'
-          );
-          console.log('📧 Email de confirmación enviado');
-        } catch (emailError) {
-          console.error('Error enviando email:', emailError);
-          // No fallar el webhook si falla el email
+          const localCompleto = pedidoCompleto?.local;
+          if (localCompleto) {
+            let adminEmail = localCompleto.email;
+            let adminName = localCompleto.nombre || 'Administrador';
+
+            // Si el local tiene administrador, intentar obtener su email
+            if (!adminEmail && localCompleto.administrador) {
+              // Si administrador ya está poblado con email
+              if (typeof localCompleto.administrador === 'object' && localCompleto.administrador.email) {
+                adminEmail = localCompleto.administrador.email;
+                adminName = localCompleto.administrador.name || adminName;
+              } else {
+                // Si es solo un ID, obtener el usuario
+                const adminUserId = typeof localCompleto.administrador === 'object' 
+                  ? localCompleto.administrador._id 
+                  : localCompleto.administrador;
+                if (adminUserId) {
+                  const adminUser = await User.findById(adminUserId).select('name email');
+                  if (adminUser?.email) {
+                    adminEmail = adminUser.email;
+                    adminName = adminUser.name || adminName;
+                  }
+                }
+              }
+            }
+
+            // Fallback al email FROM de SendGrid
+            if (!adminEmail) {
+              adminEmail = process.env.SENDGRID_FROM_EMAIL || 'noreply@remeraslisas.com';
+            }
+
+            if (adminEmail && pedidoCompleto) {
+              await sendNewOrderNotificationToAdmin(
+                adminEmail,
+                adminName,
+                pedidoCompleto,
+                localCompleto
+              );
+              console.log(`✅ Notificación de pago confirmado enviada al admin: ${adminEmail}`);
+            }
+          }
+        } catch (adminEmailError) {
+          console.error('Error enviando notificación al admin:', adminEmailError);
+          // No fallar el webhook si falla el email al admin
         }
       }
     } else {
