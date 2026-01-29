@@ -101,8 +101,8 @@ const uploadSeccion = multer({
   fileFilter: fileFilter
 });
 
-// Función para optimizar imágenes con compresión mejorada
-const optimizarImagen = async (file, width = 1200) => {
+// Función para optimizar imágenes manteniendo mejor calidad
+const optimizarImagen = async (file, width = 2000) => {
   try {
     // Verificar que el archivo existe
     if (!file || !file.path) {
@@ -113,58 +113,114 @@ const optimizarImagen = async (file, width = 1200) => {
     // Obtener metadatos de la imagen original para determinar mejor estrategia
     const metadata = await sharp(file.path).metadata();
     const originalSize = fs.statSync(file.path).size;
+    const originalExt = path.extname(file.path).toLowerCase();
+    const originalMime = file.mimetype || metadata.format;
     
-    // Convertir a webp para mejor compresión
-    const outputPath = file.path.replace(/\.[^/.]+$/, '.webp');
+    // Determinar si necesitamos redimensionar (solo si es significativamente más grande)
+    const needsResize = metadata.width && metadata.width > width * 1.1; // Solo redimensionar si es 10% más grande
     
-    // Configuración de optimización mejorada
+    // Si la imagen es pequeña y ya está en un formato eficiente, mantenerla
+    if (!needsResize && originalSize < 2 * 1024 * 1024 && (originalExt === '.jpg' || originalExt === '.jpeg' || originalExt === '.webp')) {
+      console.log(`Imagen ya optimizada, manteniendo formato original: ${(originalSize / 1024 / 1024).toFixed(2)}MB`);
+      return file;
+    }
+    
+    // Configuración de optimización mejorada con mayor calidad
     let sharpInstance = sharp(file.path);
     
-    // Redimensionar si es necesario
-    if (metadata.width && metadata.width > width) {
+    // Redimensionar solo si es necesario (con más margen para mantener calidad)
+    if (needsResize) {
       sharpInstance = sharpInstance.resize({ 
         width: width, 
         withoutEnlargement: true,
-        fit: 'inside' // Mantener proporción
+        fit: 'inside', // Mantener proporción
+        kernel: 'lanczos3' // Mejor algoritmo de redimensionamiento para calidad
       });
     }
     
-    // Aplicar optimizaciones según el tamaño original
-    // Para imágenes muy grandes, usar compresión más agresiva
-    let quality = 75; // Calidad base
-    if (originalSize > 10 * 1024 * 1024) { // Si es mayor a 10MB
-      quality = 70; // Compresión más agresiva
-    } else if (originalSize > 5 * 1024 * 1024) { // Si es mayor a 5MB
-      quality = 72;
+    // Calidad mejorada: usar 85-90% en lugar de 70-75%
+    // Solo aplicar compresión más agresiva para archivos muy grandes
+    let quality = 88; // Calidad base mejorada
+    if (originalSize > 15 * 1024 * 1024) { // Si es mayor a 15MB
+      quality = 85; // Compresión moderada para archivos muy grandes
+    } else if (originalSize > 10 * 1024 * 1024) { // Si es mayor a 10MB
+      quality = 87;
     }
     
-    // Convertir a WebP con optimizaciones
-    await sharpInstance
-      .webp({ 
-        quality: quality,
-        effort: 6, // Mayor esfuerzo de compresión (0-6)
-        smartSubsample: true // Mejor calidad en áreas importantes
-      })
-      .toFile(outputPath);
+    // Determinar formato de salida: mantener formato original si es JPEG, sino usar WebP
+    let outputPath;
+    let outputMime;
+    let sharpPipeline;
+    
+    if (originalExt === '.jpg' || originalExt === '.jpeg') {
+      // Mantener JPEG con mejor calidad
+      outputPath = file.path.replace(/\.[^/.]+$/, '.jpg');
+      outputMime = 'image/jpeg';
+      sharpPipeline = sharpInstance
+        .jpeg({ 
+          quality: quality,
+          mozjpeg: true, // Usar mozjpeg para mejor compresión
+          progressive: true // JPEG progresivo para mejor carga
+        });
+    } else if (originalExt === '.png') {
+      // Para PNG, convertir a JPEG si no tiene transparencia, sino mantener PNG
+      if (metadata.hasAlpha) {
+        // Mantener PNG si tiene transparencia
+        outputPath = file.path.replace(/\.[^/.]+$/, '.png');
+        outputMime = 'image/png';
+        sharpPipeline = sharpInstance
+          .png({ 
+            quality: quality,
+            compressionLevel: 6 // Nivel de compresión moderado
+          });
+      } else {
+        // Convertir a JPEG si no tiene transparencia (mejor compresión)
+        outputPath = file.path.replace(/\.[^/.]+$/, '.jpg');
+        outputMime = 'image/jpeg';
+        sharpPipeline = sharpInstance
+          .jpeg({ 
+            quality: quality,
+            mozjpeg: true,
+            progressive: true
+          });
+      }
+    } else {
+      // Para otros formatos, usar WebP con mejor calidad
+      outputPath = file.path.replace(/\.[^/.]+$/, '.webp');
+      outputMime = 'image/webp';
+      sharpPipeline = sharpInstance
+        .webp({ 
+          quality: quality,
+          effort: 4, // Esfuerzo moderado (balance entre calidad y velocidad)
+          smartSubsample: true // Mejor calidad en áreas importantes
+        });
+    }
+    
+    // Aplicar optimización
+    await sharpPipeline.toFile(outputPath);
     
     // Verificar el tamaño del archivo optimizado
     const optimizedSize = fs.statSync(outputPath).size;
-    const compressionRatio = ((1 - optimizedSize / originalSize) * 100).toFixed(1);
+    const compressionRatio = originalSize > optimizedSize 
+      ? ((1 - optimizedSize / originalSize) * 100).toFixed(1)
+      : ((optimizedSize / originalSize - 1) * 100).toFixed(1);
     
-    console.log(`Imagen optimizada: ${(originalSize / 1024 / 1024).toFixed(2)}MB -> ${(optimizedSize / 1024 / 1024).toFixed(2)}MB (${compressionRatio}% reducción)`);
+    console.log(`Imagen optimizada: ${(originalSize / 1024 / 1024).toFixed(2)}MB -> ${(optimizedSize / 1024 / 1024).toFixed(2)}MB (${compressionRatio}% ${originalSize > optimizedSize ? 'reducción' : 'aumento'})`);
     
-    // Eliminar archivo original
-    try {
-      fs.unlinkSync(file.path);
-    } catch (err) {
-      console.error('Error al eliminar archivo original:', err);
+    // Eliminar archivo original solo si se creó uno nuevo
+    if (outputPath !== file.path) {
+      try {
+        fs.unlinkSync(file.path);
+      } catch (err) {
+        console.error('Error al eliminar archivo original:', err);
+      }
     }
     
     // Actualizar información del archivo
     file.path = outputPath;
     file.destination = path.dirname(outputPath);
     file.filename = path.basename(outputPath);
-    file.mimetype = 'image/webp';
+    file.mimetype = outputMime;
     
     return file;
   } catch (error) {
@@ -187,11 +243,11 @@ export const uploadSingleImage = (req, res, next) => {
     if (req.files) {
       if (req.files['logo'] && req.files['logo'][0]) {
         req.file = req.files['logo'][0];
-        // Optimizar logo (tamaño más pequeño)
-        req.file = await optimizarImagen(req.file, 500);
+        // Optimizar logo manteniendo mejor calidad (aumentado de 500 a 800px)
+        req.file = await optimizarImagen(req.file, 800);
       } else if (req.files['logo url'] && req.files['logo url'][0]) {
         req.file = req.files['logo url'][0];
-        req.file = await optimizarImagen(req.file, 500);
+        req.file = await optimizarImagen(req.file, 800);
       }
     }
     
@@ -216,8 +272,8 @@ export const uploadBanner = (req, res, next) => {
       // Procesar las imágenes de banner
       if (req.files['banner'] && req.files['banner'].length > 0) {
         for (const file of req.files['banner']) {
-          // Optimizar banner
-          const optimizedFile = await optimizarImagen(file, 1600);
+          // Optimizar banner manteniendo mejor calidad (aumentado de 1600 a 2560px para 2K)
+          const optimizedFile = await optimizarImagen(file, 2560);
           files.push(optimizedFile);
         }
       } 
@@ -225,7 +281,7 @@ export const uploadBanner = (req, res, next) => {
       // Procesar las imágenes de banner url si existen
       if (req.files['banner url'] && req.files['banner url'].length > 0) {
         for (const file of req.files['banner url']) {
-          const optimizedFile = await optimizarImagen(file, 1600);
+          const optimizedFile = await optimizarImagen(file, 2560);
           files.push(optimizedFile);
         }
       }
@@ -289,8 +345,8 @@ export const uploadCarruselImages = (req, res, next) => {
           // Optimizar cada imagen antes de añadirla al array
           for (const file of fieldFiles) {
             file.index = index;
-            // Optimizar imagen
-            const optimizedFile = await optimizarImagen(file, 1200);
+            // Optimizar imagen manteniendo mejor calidad (aumentado de 1200 a 2000px)
+            const optimizedFile = await optimizarImagen(file, 2000);
             files.push(optimizedFile);
           }
         }
@@ -322,8 +378,8 @@ export const uploadImagenSeccion = (req, res, next) => {
     // Procesar resultado para que sea compatible con req.file
     if (req.files && req.files['imagen'] && req.files['imagen'][0]) {
       req.file = req.files['imagen'][0];
-      // Optimizar imagen
-      req.file = await optimizarImagen(req.file, 1000);
+      // Optimizar imagen manteniendo mejor calidad (aumentado de 1000 a 1800px)
+      req.file = await optimizarImagen(req.file, 1800);
       console.log('Imagen de sección procesada:', req.file.filename);
     }
     
