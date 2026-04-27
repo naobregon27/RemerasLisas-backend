@@ -176,7 +176,34 @@ const localSchema = new mongoose.Schema({
         type: String,
         default: '© 2024 Mi Tienda. Todos los derechos reservados.'
       }
-    }
+    },
+    // Videos cortos (máx 10 segundos) para mostrar en la tienda
+    videos: [{
+      url: {
+        type: String,
+        required: true
+      },
+      titulo: {
+        type: String,
+        default: ''
+      },
+      descripcion: {
+        type: String,
+        default: ''
+      },
+      activo: {
+        type: Boolean,
+        default: true
+      },
+      orden: {
+        type: Number,
+        default: 0
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now
+      }
+    }]
   },
   // Configuración de negocio
   configuracionNegocio: {

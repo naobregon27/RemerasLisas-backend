@@ -4,6 +4,11 @@ import fs from 'fs';
 import storageConfig from '../config/storage.js';
 import sharp from 'sharp';
 
+// Tipos MIME de video permitidos
+const VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/avi'];
+// Límite de 100MB para videos cortos (10 segundos en alta calidad)
+const MAX_VIDEO_SIZE = 100 * 1024 * 1024;
+
 // Asegurarse de que exista el directorio para subir archivos
 const uploadDir = './uploads';
 if (!fs.existsSync(uploadDir)) {
@@ -387,13 +392,50 @@ export const uploadImagenSeccion = (req, res, next) => {
   });
 };
 
+// Configuración de almacenamiento para videos
+const videoStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, storageConfig.VIDEOS_DIR);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'video-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const videoFileFilter = (req, file, cb) => {
+  if (VIDEO_MIME_TYPES.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Solo se permiten archivos de video (mp4, webm, mov, avi).'), false);
+  }
+};
+
+const uploadVideoMulter = multer({
+  storage: videoStorage,
+  limits: { fileSize: MAX_VIDEO_SIZE },
+  fileFilter: videoFileFilter
+});
+
+// Middleware para subir un video corto
+export const uploadVideo = (req, res, next) => {
+  const videoUpload = uploadVideoMulter.single('video');
+  
+  videoUpload(req, res, (err) => {
+    if (err) return handleMulterError(err, req, res, next);
+    next();
+  });
+};
+
 // Middleware para manejar errores de multer
 export const handleMulterError = (err, req, res, next) => {
   console.error('Error de Multer:', err);
   
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ msg: 'El archivo es demasiado grande. El tamaño máximo permitido es 30MB por imagen.' });
+      const isVideo = err.field === 'video';
+      const limite = isVideo ? '100MB' : '30MB';
+      return res.status(400).json({ msg: `El archivo es demasiado grande. El tamaño máximo permitido es ${limite}.` });
     }
     return res.status(400).json({ msg: `Error en la carga del archivo: ${err.message}` });
   } else if (err) {

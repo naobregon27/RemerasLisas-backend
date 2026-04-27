@@ -13,7 +13,8 @@ import {
   actualizarCarrusel,
   agregarSeccionPersonalizada,
   eliminarSeccionPersonalizada,
-  obtenerConfiguracionCompleta
+  obtenerConfiguracionCompleta,
+  obtenerVideos
 } from '../controllers/tiendaPublicaController.js';
 import { checkAuth } from '../middleware/checkAuth.js';
 import checkRole from '../middleware/checkRole.js';
@@ -70,5 +71,8 @@ router.put('/tiendas/:slug/configuracion/carrusel', checkAuth, isAdmin, uploadCa
 // Gestionar secciones personalizadas
 router.post('/tiendas/:slug/configuracion/secciones', checkAuth, isAdmin, uploadImagenSeccion, handleMulterError, agregarSeccionPersonalizada);
 router.delete('/tiendas/:slug/configuracion/secciones/:seccionId', checkAuth, isAdmin, eliminarSeccionPersonalizada);
+
+// Videos (público - solo activos)
+router.get('/tiendas/:slug/videos', obtenerVideos);
 
 export default router; 

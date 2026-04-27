@@ -4,7 +4,31 @@ import Categoria from '../models/Categoria.js';
 import mongoose from 'mongoose';
 import fs from 'fs';
 import path from 'path';
+import sharp from 'sharp';
 import storageConfig from '../config/storage.js';
+
+// Comprime la imagen en disco y devuelve string base64 listo para guardar en MongoDB.
+// Se convierte a JPEG 75% calidad, máx 1200px de ancho → baja el tamaño ~70-80% respecto al original.
+const comprimirParaBase64 = async (filePath, mimetype, maxWidth = 1200) => {
+  const tmpPath = filePath + '.b64tmp.jpg';
+  try {
+    await sharp(filePath)
+      .resize({ width: maxWidth, withoutEnlargement: true, fit: 'inside' })
+      .jpeg({ quality: 75, progressive: true, mozjpeg: true })
+      .toFile(tmpPath);
+    
+    const buffer = fs.readFileSync(tmpPath);
+    return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+  } catch (err) {
+    console.error('Error al comprimir imagen para base64, usando original:', err.message);
+    const buffer = fs.readFileSync(filePath);
+    return `data:${mimetype};base64,${buffer.toString('base64')}`;
+  } finally {
+    // Borrar archivos temporales del disco
+    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (_) {}
+  }
+};
 
 // Obtener información básica de la tienda
 export const obtenerInfoTienda = async (req, res) => {
@@ -12,9 +36,15 @@ export const obtenerInfoTienda = async (req, res) => {
     const { slug } = req.params;
     console.log(`🔍 Buscando tienda con slug: "${slug}"`);
     
-    // Buscar la tienda por slug
+    // Buscar la tienda por slug.
+    // IMPORTANTE: se excluyen los campos con imágenes/videos en base64 (bannerPrincipal, carrusel, secciones, videos)
+    // porque son pesados y se cargan por separado vía /configuracion/publica.
     const tienda = await Local.findOne({ slug }).select(
-      'nombre direccion telefono email horarioAtencion ubicacionGPS configuracionTienda configuracionNegocio isActive'
+      'nombre direccion telefono email horarioAtencion ubicacionGPS isActive ' +
+      'configuracionTienda.colorPrimario configuracionTienda.colorSecundario configuracionTienda.colorTexto ' +
+      'configuracionTienda.logo configuracionTienda.mensaje configuracionTienda.metaTitulo configuracionTienda.metaDescripcion ' +
+      'configuracionTienda.menuPersonalizado configuracionTienda.piePagina ' +
+      'configuracionNegocio'
     );
     
     if (!tienda) {
@@ -434,15 +464,12 @@ export const subirLogo = async (req, res) => {
     let logoUrl, logoAlt;
     
     if (req.file) {
-      // Si se subió un archivo mediante form-data
-      // Aquí asumimos que ya hay un middleware multer configurado
-      logoUrl = req.file.path || req.file.location || `/uploads/${req.file.filename}`;
+      // Usar URL relativa servida como estático en lugar de ruta absoluta de disco
+      logoUrl = storageConfig.getUrl('logos', req.file.filename);
       
-      // Manejar diferentes formatos de nombres de campo
       logoAlt = req.body.logoAlt || req.body['logo alt'] || 'Logo de la tienda';
       
-      console.log('Se recibió un archivo:', req.file);
-      console.log('Body completo:', req.body);
+      console.log('Se recibió un archivo logo:', req.file.filename);
     } else {
       // Si se envió una URL en JSON
       logoUrl = req.body.logoUrl;
@@ -516,51 +543,21 @@ export const subirBanner = async (req, res) => {
     
     // Verificar si es form-data con archivos o JSON con URLs
     if (req.files && req.files.length > 0) {
-      // Procesamos cada archivo subido
+      // Comprimir y convertir a base64 para guardar en MongoDB
       for (const file of req.files) {
-        // Convertir la imagen a base64
-        const imageBuffer = fs.readFileSync(file.path);
-        const base64Image = `data:${file.mimetype};base64,${imageBuffer.toString('base64')}`;
-        
-        // Buscar si hay un alt específico para este archivo
         const bannerAlt = req.body[`bannerAlt_${file.fieldname}`] || 
                        req.body[`alt_${file.fieldname}`] || 
                        'Banner de la tienda';
         
-        bannerImagenes.push({
-          url: base64Image,
-          alt: bannerAlt
-        });
-        
-        // Eliminar el archivo temporal después de convertirlo a base64
-        try {
-          fs.unlinkSync(file.path);
-        } catch (err) {
-          console.error('Error al eliminar archivo temporal:', err);
-        }
+        const base64Image = await comprimirParaBase64(file.path, file.mimetype, 1280);
+        bannerImagenes.push({ url: base64Image, alt: bannerAlt });
       }
       console.log('Se recibieron archivos para banner:', req.files.length);
     } else if (req.file) {
-      // Si se subió un solo archivo
-      // Convertir la imagen a base64
-      const imageBuffer = fs.readFileSync(req.file.path);
-      const base64Image = `data:${req.file.mimetype};base64,${imageBuffer.toString('base64')}`;
-      
       const bannerAlt = req.body.bannerAlt || req.body['banner alt'] || 'Banner principal de la tienda';
-      
-      bannerImagenes.push({
-        url: base64Image,
-        alt: bannerAlt
-      });
-      
-      // Eliminar el archivo temporal después de convertirlo a base64
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (err) {
-        console.error('Error al eliminar archivo temporal:', err);
-      }
-      
-      console.log('Se recibió un archivo para banner:', req.file);
+      const base64Image = await comprimirParaBase64(req.file.path, req.file.mimetype, 1280);
+      bannerImagenes.push({ url: base64Image, alt: bannerAlt });
+      console.log('Se recibió un archivo para banner:', req.file.filename);
     } else if (req.body.bannerImagenes) {
       // Si se envió un array de URLs en JSON
       try {
@@ -636,19 +633,14 @@ export const actualizarCarrusel = async (req, res) => {
       // Archivos cargados por form-data
       console.log('Se recibieron archivos para carrusel:', req.files.length);
       
-      // Procesamos cada archivo y obtenemos los metadatos correspondientes
-      imagenes = req.files.map((file, fileIndex) => {
+      // Comprimir y convertir a base64 para guardar en MongoDB
+      imagenes = await Promise.all(req.files.map(async (file, fileIndex) => {
         const index = file.index || fileIndex;
         
-        // Obtener el valor de orden y validar que sea un número
         let orden = parseInt(req.body[`orden_${index}`]);
-        if (isNaN(orden)) {
-          orden = index; // Usar el índice como valor por defecto si no es un número válido
-        }
-
-        // Convertir la imagen a base64
-        const imageBuffer = fs.readFileSync(file.path);
-        const base64Image = `data:${file.mimetype};base64,${imageBuffer.toString('base64')}`;
+        if (isNaN(orden)) orden = index;
+        
+        const base64Image = await comprimirParaBase64(file.path, file.mimetype, 1200);
         
         return {
           url: base64Image,
@@ -659,9 +651,9 @@ export const actualizarCarrusel = async (req, res) => {
           botonUrl: req.body[`botonUrl_${index}`] || '',
           orden: orden
         };
-      });
+      }));
       
-      console.log('Imágenes procesadas:', imagenes);
+      console.log('Imágenes procesadas para carrusel:', imagenes.length);
     } else if (req.body.imagenes) {
       // Si se envió un arreglo de imágenes en JSON
       if (typeof req.body.imagenes === 'string') {
@@ -771,22 +763,10 @@ export const agregarSeccionPersonalizada = async (req, res) => {
     
     console.log('Body recibido en agregarSeccionPersonalizada:', req.body);
     
-    // Si hay un archivo adjunto, convertirlo a base64 (igual que banner y carrusel)
+    // Si hay un archivo adjunto, comprimir y convertir a base64
     if (req.file) {
-      console.log('Archivo recibido:', req.file);
-      // Convertir la imagen a base64
-      const imageBuffer = fs.readFileSync(req.file.path);
-      imagen = `data:${req.file.mimetype};base64,${imageBuffer.toString('base64')}`;
-      
-      // Eliminar el archivo temporal después de convertirlo a base64
-      try {
-        fs.unlinkSync(req.file.path);
-        console.log('Archivo temporal eliminado después de convertir a base64');
-      } catch (err) {
-        console.error('Error al eliminar archivo temporal:', err);
-      }
-      
-      console.log('Imagen convertida a base64');
+      console.log('Archivo recibido para sección:', req.file.filename);
+      imagen = await comprimirParaBase64(req.file.path, req.file.mimetype, 900);
     }
     
     // Validar que tengamos los campos obligatorios
@@ -900,38 +880,60 @@ export const eliminarSeccionPersonalizada = async (req, res) => {
   }
 };
 
-// Función helper para normalizar URLs de imágenes en secciones (mantener compatibilidad con datos antiguos)
+// Función helper para normalizar URLs de imágenes en secciones (compatibilidad con datos antiguos)
 const normalizarUrlImagenSeccion = (imagenUrl) => {
   if (!imagenUrl) return null;
   
-  // Si ya es base64, devolverlo tal cual
-  if (imagenUrl.startsWith('data:image/')) {
+  // Base64 normal → devolver tal cual
+  if (imagenUrl.startsWith('data:image/') || imagenUrl.startsWith('data:image')) {
     return imagenUrl;
   }
   
-  // Si es una URL completa (http/https), devolverla tal cual
+  // URL completa (http/https) → devolver tal cual
   if (imagenUrl.startsWith('http://') || imagenUrl.startsWith('https://')) {
     return imagenUrl;
   }
   
-  // Si es una ruta absoluta que contiene 'secciones', intentar convertirla a base64 si el archivo existe
-  if (imagenUrl.includes('secciones') && fs.existsSync(imagenUrl)) {
-    try {
-      const imageBuffer = fs.readFileSync(imagenUrl);
-      const mimeType = path.extname(imagenUrl).toLowerCase() === '.webp' ? 'image/webp' : 'image/jpeg';
-      return `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
-    } catch (err) {
-      console.error('Error al convertir imagen antigua a base64:', err);
-    }
-  }
-  
-  // Si es una URL relativa que comienza con /images, devolverla tal cual (compatibilidad)
-  if (imagenUrl.startsWith('/images/secciones/')) {
+  // URL relativa /images/ o /videos/ → devolver tal cual
+  if (imagenUrl.startsWith('/images/') || imagenUrl.startsWith('/videos/')) {
     return imagenUrl;
   }
   
-  // Devolver tal cual si no se puede procesar
+  // Ruta absoluta de disco con 'secciones' (dato legacy) → intentar leer y convertir a base64
+  if (imagenUrl.includes('secciones') && fs.existsSync(imagenUrl)) {
+    try {
+      const imageBuffer = fs.readFileSync(imagenUrl);
+      const ext = path.extname(imagenUrl).toLowerCase();
+      const mimeType = ext === '.webp' ? 'image/webp' : ext === '.png' ? 'image/png' : 'image/jpeg';
+      return `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+    } catch (err) {
+      console.error('Error al convertir imagen legacy a base64:', err.message);
+    }
+  }
+  
   return imagenUrl;
+};
+
+// Obtener videos activos de la tienda (público)
+export const obtenerVideos = async (req, res) => {
+  try {
+    const { slug } = req.params;
+    
+    const tienda = await Local.findOne({ slug, isActive: true }).select('configuracionTienda.videos');
+    
+    if (!tienda) {
+      return res.status(404).json({ msg: 'Tienda no encontrada' });
+    }
+    
+    const videos = (tienda.configuracionTienda.videos || [])
+      .filter(v => v.activo)
+      .sort((a, b) => a.orden - b.orden);
+    
+    return res.json({ videos });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ msg: 'Hubo un error al obtener los videos' });
+  }
 };
 
 // Obtener configuración completa de la tienda para edición
@@ -973,7 +975,7 @@ export const obtenerConfiguracionCompleta = async (req, res) => {
       });
     }
     
-    // Para acceso público (frontend de tienda), solo devolvemos la configuración visual
+    // Para acceso público (frontend de tienda), devolvemos configuración visual + imágenes + videos activos
     return res.json({
       configuracionTienda: {
         colorPrimario: tienda.configuracionTienda.colorPrimario,
@@ -985,7 +987,10 @@ export const obtenerConfiguracionCompleta = async (req, res) => {
         logo: tienda.configuracionTienda.logo,
         bannerPrincipal: tienda.configuracionTienda.bannerPrincipal,
         carrusel: tienda.configuracionTienda.carrusel,
-        secciones: tienda.configuracionTienda.secciones
+        secciones: tienda.configuracionTienda.secciones,
+        videos: (tienda.configuracionTienda.videos || [])
+          .filter(v => v.activo)
+          .sort((a, b) => a.orden - b.orden)
       }
     });
   } catch (error) {

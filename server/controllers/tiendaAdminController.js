@@ -3,6 +3,29 @@ import mongoose from 'mongoose';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import sharp from 'sharp';
+import storageConfig from '../config/storage.js';
+
+// Comprime y convierte a base64 (igual que en tiendaPublicaController)
+const comprimirParaBase64 = async (filePath, mimetype, maxWidth = 900) => {
+  const tmpPath = filePath + '.b64tmp.jpg';
+  try {
+    await sharp(filePath)
+      .resize({ width: maxWidth, withoutEnlargement: true, fit: 'inside' })
+      .jpeg({ quality: 75, progressive: true, mozjpeg: true })
+      .toFile(tmpPath);
+    
+    const buffer = fs.readFileSync(tmpPath);
+    return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+  } catch (err) {
+    console.error('Error al comprimir imagen para base64:', err.message);
+    const buffer = fs.readFileSync(filePath);
+    return `data:${mimetype};base64,${buffer.toString('base64')}`;
+  } finally {
+    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (_) {}
+  }
+};
 
 // Función helper para verificar permisos sobre una tienda
 const verificarPermisosAdmin = (tienda, usuario) => {
@@ -159,22 +182,10 @@ export const actualizarSeccion = async (req, res) => {
       return res.status(404).json({ msg: 'Sección no encontrada' });
     }
     
-    // Si hay un archivo adjunto, convertirlo a base64 (igual que banner y carrusel)
+    // Si hay un archivo adjunto, comprimir y convertir a base64
     if (req.file) {
-      console.log('Archivo recibido para actualizar sección:', req.file);
-      // Convertir la imagen a base64
-      const imageBuffer = fs.readFileSync(req.file.path);
-      imagen = `data:${req.file.mimetype};base64,${imageBuffer.toString('base64')}`;
-      
-      // Eliminar el archivo temporal después de convertirlo a base64
-      try {
-        fs.unlinkSync(req.file.path);
-        console.log('Archivo temporal eliminado después de convertir a base64');
-      } catch (err) {
-        console.error('Error al eliminar archivo temporal:', err);
-      }
-      
-      console.log('Imagen convertida a base64 para actualización');
+      console.log('Archivo recibido para actualizar sección:', req.file.filename);
+      imagen = await comprimirParaBase64(req.file.path, req.file.mimetype, 900);
     }
     
     // Actualizar la sección
@@ -374,5 +385,161 @@ export const previsualizarConfiguracion = async (req, res) => {
   } catch (error) {
     console.log(error);
     return res.status(500).json({ msg: 'Hubo un error al previsualizar la configuración' });
+  }
+};
+
+// ── GESTIÓN DE VIDEOS ──────────────────────────────────────────────────────────
+
+// Subir un video corto (admin)
+export const subirVideo = async (req, res) => {
+  try {
+    const { slug } = req.params;
+    
+    if (!req.file) {
+      return res.status(400).json({ msg: 'Se requiere un archivo de video' });
+    }
+    
+    const tienda = await Local.findOne({ slug });
+    if (!tienda) {
+      return res.status(404).json({ msg: 'Tienda no encontrada' });
+    }
+    
+    if (!verificarPermisosAdmin(tienda, req.user)) {
+      // Eliminar el archivo subido si no tiene permisos
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+      return res.status(403).json({ msg: 'No tienes permisos para administrar esta tienda' });
+    }
+    
+    if (!tienda.configuracionTienda.videos) {
+      tienda.configuracionTienda.videos = [];
+    }
+    
+    const nuevoVideo = {
+      url: storageConfig.getUrl('videos', req.file.filename),
+      titulo: req.body.titulo || '',
+      descripcion: req.body.descripcion || '',
+      activo: true,
+      orden: tienda.configuracionTienda.videos.length
+    };
+    
+    tienda.configuracionTienda.videos.push(nuevoVideo);
+    await tienda.save();
+    
+    console.log('Video subido:', req.file.filename);
+    return res.status(201).json({
+      msg: 'Video subido correctamente',
+      video: nuevoVideo
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ msg: 'Hubo un error al subir el video' });
+  }
+};
+
+// Obtener todos los videos (admin - incluye inactivos)
+export const obtenerVideosAdmin = async (req, res) => {
+  try {
+    const { slug } = req.params;
+    
+    const tienda = await Local.findOne({ slug }).select('configuracionTienda.videos administrador empleados');
+    if (!tienda) {
+      return res.status(404).json({ msg: 'Tienda no encontrada' });
+    }
+    
+    if (!verificarPermisosAdmin(tienda, req.user)) {
+      return res.status(403).json({ msg: 'No tienes permisos para administrar esta tienda' });
+    }
+    
+    return res.json({
+      videos: tienda.configuracionTienda.videos || []
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ msg: 'Hubo un error al obtener los videos' });
+  }
+};
+
+// Actualizar datos de un video (título, descripción, activo, orden)
+export const actualizarVideo = async (req, res) => {
+  try {
+    const { slug, videoId } = req.params;
+    const { titulo, descripcion, activo, orden } = req.body;
+    
+    const tienda = await Local.findOne({ slug });
+    if (!tienda) {
+      return res.status(404).json({ msg: 'Tienda no encontrada' });
+    }
+    
+    if (!verificarPermisosAdmin(tienda, req.user)) {
+      return res.status(403).json({ msg: 'No tienes permisos para administrar esta tienda' });
+    }
+    
+    const videos = tienda.configuracionTienda.videos || [];
+    const idx = videos.findIndex(v => v._id.toString() === videoId);
+    
+    if (idx === -1) {
+      return res.status(404).json({ msg: 'Video no encontrado' });
+    }
+    
+    if (titulo !== undefined) videos[idx].titulo = titulo;
+    if (descripcion !== undefined) videos[idx].descripcion = descripcion;
+    if (activo !== undefined) videos[idx].activo = activo;
+    if (orden !== undefined) videos[idx].orden = orden;
+    
+    tienda.configuracionTienda.videos = videos.sort((a, b) => a.orden - b.orden);
+    await tienda.save();
+    
+    return res.json({
+      msg: 'Video actualizado correctamente',
+      video: videos[idx]
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ msg: 'Hubo un error al actualizar el video' });
+  }
+};
+
+// Eliminar un video
+export const eliminarVideo = async (req, res) => {
+  try {
+    const { slug, videoId } = req.params;
+    
+    const tienda = await Local.findOne({ slug });
+    if (!tienda) {
+      return res.status(404).json({ msg: 'Tienda no encontrada' });
+    }
+    
+    if (!verificarPermisosAdmin(tienda, req.user)) {
+      return res.status(403).json({ msg: 'No tienes permisos para administrar esta tienda' });
+    }
+    
+    const videos = tienda.configuracionTienda.videos || [];
+    const idx = videos.findIndex(v => v._id.toString() === videoId);
+    
+    if (idx === -1) {
+      return res.status(404).json({ msg: 'Video no encontrado' });
+    }
+    
+    // Intentar eliminar el archivo del disco
+    const videoUrl = videos[idx].url;
+    const filename = path.basename(videoUrl);
+    const filePath = path.join(storageConfig.VIDEOS_DIR, filename);
+    
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log('Archivo de video eliminado:', filename);
+      }
+    } catch (err) {
+      console.error('Error al eliminar archivo de video del disco:', err);
+    }
+    
+    tienda.configuracionTienda.videos.splice(idx, 1);
+    await tienda.save();
+    
+    return res.json({ msg: 'Video eliminado correctamente' });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ msg: 'Hubo un error al eliminar el video' });
   }
 }; 

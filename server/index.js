@@ -24,8 +24,8 @@ const app = express();
 
 // Middleware
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Para form-data básico
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Crear directorio para uploads si no existe
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -41,6 +41,16 @@ app.use('/images/carrusel', express.static(storageConfig.CARRUSEL_DIR));
 app.use('/images/logos', express.static(storageConfig.LOGOS_DIR));
 app.use('/images/banners', express.static(storageConfig.BANNERS_DIR));
 app.use('/images/secciones', express.static(storageConfig.SECCIONES_DIR));
+
+// Servir videos (con soporte para range requests para streaming)
+app.use('/videos', express.static(storageConfig.VIDEOS_DIR, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.mp4')) res.set('Content-Type', 'video/mp4');
+    else if (filePath.endsWith('.webm')) res.set('Content-Type', 'video/webm');
+    else if (filePath.endsWith('.mov')) res.set('Content-Type', 'video/quicktime');
+    res.set('Accept-Ranges', 'bytes');
+  }
+}));
 
 // Middleware de logging para todas las peticiones
 app.use(logger);

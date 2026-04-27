@@ -1,13 +1,14 @@
 import path from 'path';
 import fs from 'fs';
 
-// Usar una ubicación fija y absoluta para las imágenes
+// Usar una ubicación fija y absoluta para las imágenes y videos
 const STORAGE_BASE_DIR = path.join(process.cwd(), 'storage');
 const IMAGES_DIR = path.join(STORAGE_BASE_DIR, 'images');
 const CARRUSEL_DIR = path.join(IMAGES_DIR, 'carrusel');
 const LOGOS_DIR = path.join(IMAGES_DIR, 'logos');
 const BANNERS_DIR = path.join(IMAGES_DIR, 'banners');
 const SECCIONES_DIR = path.join(IMAGES_DIR, 'secciones');
+const VIDEOS_DIR = path.join(STORAGE_BASE_DIR, 'videos');
 
 // Crear la estructura de directorios si no existe
 const createDirIfNotExists = (dir) => {
@@ -23,6 +24,7 @@ createDirIfNotExists(CARRUSEL_DIR);
 createDirIfNotExists(LOGOS_DIR);
 createDirIfNotExists(BANNERS_DIR);
 createDirIfNotExists(SECCIONES_DIR);
+createDirIfNotExists(VIDEOS_DIR);
 
 // Asegurar los permisos correctos en todos los directorios
 try {
@@ -32,6 +34,7 @@ try {
   fs.chmodSync(LOGOS_DIR, 0o755);
   fs.chmodSync(BANNERS_DIR, 0o755);
   fs.chmodSync(SECCIONES_DIR, 0o755);
+  fs.chmodSync(VIDEOS_DIR, 0o755);
 } catch (error) {
   console.error('Error al establecer permisos:', error);
 }
@@ -43,7 +46,11 @@ export default {
   LOGOS_DIR,
   BANNERS_DIR,
   SECCIONES_DIR,
+  VIDEOS_DIR,
   getUrl: (tipo, filename) => {
+    if (tipo === 'videos') {
+      return `/videos/${filename}`;
+    }
     return `/images/${tipo}/${filename}`;
   }
 }; 

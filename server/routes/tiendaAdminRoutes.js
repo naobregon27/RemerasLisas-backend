@@ -6,11 +6,15 @@ import {
   ordenarCarrusel,
   exportarConfiguracion,
   importarConfiguracion,
-  previsualizarConfiguracion
+  previsualizarConfiguracion,
+  subirVideo,
+  obtenerVideosAdmin,
+  actualizarVideo,
+  eliminarVideo
 } from '../controllers/tiendaAdminController.js';
 import { checkAuth } from '../middleware/checkAuth.js';
 import checkRole from '../middleware/checkRole.js';
-import { uploadImagenSeccion, handleMulterError } from '../middleware/upload.js';
+import { uploadImagenSeccion, handleMulterError, uploadVideo } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -40,5 +44,15 @@ router.post('/tiendas/:slug/admin/importar', isAdmin, importarConfiguracion);
 
 // Previsualizar configuración
 router.post('/tiendas/:slug/admin/previsualizar', isAdmin, previsualizarConfiguracion);
+
+// ── Gestión de videos (admin) ──
+// Subir video (multipart/form-data con campo "video")
+router.post('/tiendas/:slug/admin/videos', isAdmin, uploadVideo, handleMulterError, subirVideo);
+// Obtener todos los videos (incluye inactivos)
+router.get('/tiendas/:slug/admin/videos', isAdmin, obtenerVideosAdmin);
+// Actualizar título/descripción/activo/orden de un video
+router.put('/tiendas/:slug/admin/videos/:videoId', isAdmin, actualizarVideo);
+// Eliminar video
+router.delete('/tiendas/:slug/admin/videos/:videoId', isAdmin, eliminarVideo);
 
 export default router; 
